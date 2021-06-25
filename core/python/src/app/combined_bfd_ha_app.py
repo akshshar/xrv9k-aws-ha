@@ -97,22 +97,37 @@ import grpc
 
 
 #
-# Get the GRPC Server IP address and port number
+# Get each router's GRPC Server IP address and port number
 #
-def get_server_ip_port():
+def get_rtr_ip_port():
     # Get GRPC Server's IP from the environment
-    if 'SERVER_IP' not in os.environ.keys():
-        print("Need to set the SERVER_IP env variable e.g.")
-        print("export SERVER_IP='10.30.110.214'")
+    if 'RTR1_IP' not in os.environ.keys():
+        print("Need to set the RTR1_IP env variable e.g.")
+        print("export RTR1_IP='10.30.110.214'")
         os._exit(0)
 
     # Get GRPC Server's Port from the environment
-    if 'SERVER_PORT' not in os.environ.keys():
-        print("Need to set the SERVER_PORT env variable e.g.")
+    if 'RTR1_PORT' not in os.environ.keys():
+        print("Need to set the RTR1_PORT env variable e.g.")
         print("export SERVER_PORT='57777'")
         os._exit(0)
 
-    return (os.environ['SERVER_IP'], int(os.environ['SERVER_PORT']))
+    # Get GRPC Server's IP from the environment
+    if 'RTR2_IP' not in os.environ.keys():
+        print("Need to set the RTR2_IP env variable e.g.")
+        print("export RTR2_IP='10.30.110.214'")
+        os._exit(0)
+
+    # Get GRPC Server's Port from the environment
+    if 'RTR2_PORT' not in os.environ.keys():
+        print("Need to set the RTR2_PORT env variable e.g.")
+        print("export RTR2_PORT='57777'")
+        os._exit(0)
+
+    return (os.environ['RTR1_IP'], 
+            int(os.environ['RTR1_PORT']),
+            os.environ['RTR2_IP'], 
+            int(os.environ['RTR2_PORT']))
 
 
 #
@@ -239,8 +254,6 @@ class SLInterface(object):
 
     def __init__(self, grpc_server_ip, grpc_server_port):
 
-
-        #grpc_server_ip, grpc_server_port = self.get_server_ip_port()
 
         print("Using GRPC Server IP(%s) Port(%s)" %(grpc_server_ip, grpc_server_port))
        
@@ -470,27 +483,6 @@ class SLInterface(object):
             sys.exit(0)
 
 
-    #
-    # Get the GRPC Server IP address and port number
-    #
-    def get_server_ip_port(self):
-        # Get GRPC Server's IP from the environment
-        if 'SERVER_IP' not in list(os.environ.keys()):
-            print("Need to set the SERVER_IP env variable e.g.")
-            print("export SERVER_IP='10.30.110.214'")
-            sys.exit(0)
-
-        # Get GRPC Server's Port from the environment
-        if 'SERVER_PORT' not in list(os.environ.keys()):
-            print("Need to set the SERVER_PORT env variable e.g.")
-            print("export SERVER_PORT='57777'")
-            sys.exit(0)
-
-        #return (os.environ['SERVER_IP'], int(os.environ['SERVER_PORT']))
-        return('172.31.104.171', int('57777'))
-
-
-
 
 class SLBfd(object):
 
@@ -501,8 +493,6 @@ class SLBfd(object):
         self.rtr=rtr
 
 
-        #grpc_server_ip, grpc_server_port = self.get_server_ip_port()
-
         print("Using GRPC Server IP(%s) Port(%s)" %(grpc_server_ip, grpc_server_port))
        
  
@@ -510,12 +500,11 @@ class SLBfd(object):
             # Create the channel for gRPC.
             self.channel = grpc.insecure_channel(str(grpc_server_ip)+":"+
                                                        str(grpc_server_port))
-
+            # Spawn a thread to Initialize the client and listen on notifications
+            # The thread will run in the background
+            self.global_init(self.channel)
         else:
             self.channel = channel
-        # Spawn a thread to Initialize the client and listen on notifications
-        # The thread will run in the background
-        self.global_init(self.channel)
 
         # Create the gRPC stub
         self.stub = sl_bfd_ipv4_pb2_grpc.SLBfdv4OperStub(self.channel)
@@ -793,28 +782,6 @@ class SLBfd(object):
             sys.exit(0)
 
 
-    #
-    # Get the GRPC Server IP address and port number
-    #
-    def get_server_ip_port(self):
-        # Get GRPC Server's IP from the environment
-        if 'SERVER_IP' not in list(os.environ.keys()):
-            print("Need to set the SERVER_IP env variable e.g.")
-            print("export SERVER_IP='10.30.110.214'")
-            sys.exit(0)
-
-        # Get GRPC Server's Port from the environment
-        if 'SERVER_PORT' not in list(os.environ.keys()):
-            print("Need to set the SERVER_PORT env variable e.g.")
-            print("export SERVER_PORT='57777'")
-            sys.exit(0)
-
-        return (os.environ['SERVER_IP'], int(os.environ['SERVER_PORT']))
-
-
-
-
-
 
 EXIT_FLAG = False
 #POSIX signal handler to ensure we shutdown cleanly
@@ -838,10 +805,11 @@ def handler(sl_interface, sl_bfd_rtr1, sl_bfd_rtr2, signum, frame):
 #
 if __name__ == '__main__':
 
+    rtr1_ip, rtr1_port, rtr2_ip, rtr2_port = get_rtr_ip_port()
     # Create SLInterface object to setup netconf and gRPC connections, and configure active path,
     # before listening for interface events
 
-    sl_interface = SLInterface("172.31.104.171", "57777")
+    sl_interface = SLInterface(rtr2_ip, rtr2_port)
 
 
     # This thread will be handling Interface event notifications.
@@ -850,8 +818,8 @@ if __name__ == '__main__':
     sl_interface.interface_listener.start()
 
 
-    sl_bfd_rtr1 = SLBfd("rtr1", "172.31.101.101", "172.31.105.206", "172.31.104.9", "57777", channel=None)
-    sl_bfd_rtr2 = SLBfd("rtr2", "172.31.101.170", "172.31.105.91", "172.31.104.171", "57777", channel=sl_interface.channel)
+    sl_bfd_rtr1 = SLBfd("rtr1", "172.31.101.101", "172.31.105.206", rtr1_ip, rtr1_port, channel=None)
+    sl_bfd_rtr2 = SLBfd("rtr2", "172.31.101.170", "172.31.105.91", rtr2_ip, rtr2_port, channel=sl_interface.channel)
 
     sl_bfd_rtr1.bfd_op(sl_common_types_pb2.SL_OBJOP_ADD)
     sl_bfd_rtr2.bfd_op(sl_common_types_pb2.SL_OBJOP_ADD)
@@ -863,8 +831,7 @@ if __name__ == '__main__':
     interface_event = False
 
 
-    
-        # Register our handler for keyboard interrupt and termination signals
+    # Register our handler for keyboard interrupt and termination signals
     signal.signal(signal.SIGINT, partial(handler, sl_interface, sl_bfd_rtr1, sl_bfd_rtr2 ))
     signal.signal(signal.SIGTERM, partial(handler, sl_interface, sl_bfd_rtr1, sl_bfd_rtr2))
 
