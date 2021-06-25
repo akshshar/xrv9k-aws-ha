@@ -1,0 +1,26 @@
+{
+    "config": {
+
+    	"node_type": "active",
+    	"ec2_private_endpoint_url": "https://vpce-0786bfdf8aad8840c-vacmlroq-us-west-2a.ec2.us-west-2.vpce.amazonaws.com",
+    	"self_grpc_ip": "127.0.0.1",
+    	"self_grpc_port": "57777",
+    	"node_priority": "0",
+    	"preempt": false,
+    	"primary_ha_intf": {
+    		"name": "TenGigE0/0/0/2",
+    		"instance_intf_number": 2,
+    		"secondary_ip": "172.31.105.10",
+    		"neigh_ip": "172.31.105.206"
+    	},
+    	"secondary_ha_intf": {
+    		"name": "TenGigE0/0/0/1",
+    		"neigh_ip": "172.31.101.101"
+    	},
+    	"BFDDesiredTxIntUsec": 50000,
+        "DetectMultiplier": 3
+
+    }
+
+
+}
