@@ -4,7 +4,6 @@
     	"grpc_server": "127.0.0.1",
     	"grpc_port": 57777,
     	"router_id": "172.31.105.206",
-    	"hello_port": 5555,
         "action": {
             "method": "secondary_ip_shift",
             "method_params": {
@@ -12,6 +11,10 @@
             		{
             			"secondary_ip": "172.31.105.10",
 			            "instance_intf_number": 2
+            		},
+            		{
+            			"secondary_ip": "172.31.101.10",
+			            "instance_intf_number": 1
             		}
             	]
             }

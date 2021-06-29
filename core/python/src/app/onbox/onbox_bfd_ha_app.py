@@ -5,7 +5,7 @@
 # Author: akshshar@cisco.com
 #
 
-
+import argparse
 import ipaddress
 import os, sys
 import threading, time, datetime
@@ -16,12 +16,13 @@ import pdb
 import signal
 # gRPC libs
 import grpc
+import json
 
 from functools import partial
 import logging, logging.handlers
 
 # Add the generated python bindings directory to the path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
 # gRPC generated python bindings
 from genpy import sl_global_pb2_grpc
@@ -39,7 +40,7 @@ from genpy import sl_interface_pb2_grpc
 from google.protobuf import json_format
 
 
-AWS_METADATA_URL_LATEST="http://169.254.169.254/latest/"
+AWS_METADATA_URL_LATEST="http://169.254.169.254/latest"
 
 EXIT_FLAG = False
 #POSIX signal handler to ensure we shutdown cleanly
@@ -55,7 +56,9 @@ def handler(sl_bfd_ha, aws_ec2_resource, signum, frame):
           thread.join()
         sl_bfd_ha.syslogger.info("Unregistering SL-API services...")    
         sl_bfd_ha.bfd_regop(sl_common_types_pb2.SL_REGOP_UNREGISTER)
-        sl_bfd_ha.poison_pill.set()
+        sl_bfd_ha.bfd_response_stream.cancel()
+        sl_bfd_ha.global_event_stream.cancel()
+        #sl_bfd_ha.poison_pill.set()
         for thread in sl_bfd_ha.threadList:
            sl_bfd_ha.syslogger.info("Waiting for %s to finish..." %(thread.name))
            thread.join()
@@ -82,38 +85,6 @@ class BaseLogger(object):
             self.syslog_port = None
         self.syslog_file = syslog_file
         self.setup_syslog()
-        self.setup_debug_logger()
-        self.debug = False
-
-
-    def toggle_debug(self, enable):
-        """Enable/disable debug logging
-           :param enable: Enable/Disable flag
-           :type enable: int
-        """
-        if enable:
-            self.debug = True
-            self.logger.propagate = True
-        else:
-            self.debug = False
-            self.logger.propagate = False
-
-    def setup_debug_logger(self):
-        """Setup the debug logger to throw debugs to stdout/stderr
-        """
-
-        logger = logging.getLogger('DebugHaAppLogger')
-        if not len(logger.handlers):
-            logger.setLevel(logging.DEBUG)
-            # create console handler and set level to debug
-            ch = logging.StreamHandler()
-            ch.setLevel(logging.DEBUG)
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            ch.setFormatter(formatter)
-            logger.addHandler(ch)
-
-        self.logger = logger
 
 
     def setup_syslog(self):
@@ -161,27 +132,36 @@ class AWSClient(BaseLogger):
 
 
     def __init__(self,
-                 syslog_file=None,
-                 syslog_server=None,
-                 syslog_port=None,
+                 syslogger=None,
                  endpoint_url=None):
 
-        super(AWSClient, self).__init__(syslog_file=syslog_file,
-                                        syslog_server=syslog_server,
-                                        syslog_port=syslog_port)
+        #super(AWSClient, self).__init__(syslog_file=syslog_file,
+        #                                syslog_server=syslog_server,
+        #                                syslog_port=syslog_port)
+        if syslogger is None:
+            logging.error("Initialize the baselogger class and pass in the syslogger handle. Aborting...")
+            self.exit = True
+            return
+        else:
+            self.syslogger = syslogger
+        
+        self.threadList = []
         self.metadata_url_latest=AWS_METADATA_URL_LATEST
         self.endpoint_url = endpoint_url
         self.exit = False
         self.poison_pill= Event()
+        self.resource_created = Event()
         self.token_header=""
         self.start_time=datetime.datetime.now()
-        self.setup_ec2_client()
+        self.resource = None
         for fn in [self.setup_ec2_client]:
             thread = threading.Thread(target=fn, args=())
             self.threadList.append(thread)
             thread.daemon = True                            # Daemonize thread
             thread.start()                                  # Start the execution
-
+       
+        while not self.resource_created.is_set():
+            self.resource_created.wait(30) # Sleep for 30 seconds max to allow the resource to be created 
 
 
     def generate_token(self):
@@ -253,6 +233,7 @@ class AWSClient(BaseLogger):
                                     aws_session_token=self.session_token,
                                     region_name=self.region_name
                                 )
+                self.resource_created.set()
             except Exception as e:
                 self.syslogger.info("Failed to create boto resource for AWS EC2 services. error: " +str(e))
                 self.exit= True
@@ -267,7 +248,7 @@ class AWSClient(BaseLogger):
             self.syslogger.info("Checking if temporary credentials need to be refreshed...")
             self.call_time=datetime.datetime.now()
             time_elapsed = self.call_time -  self.start_time
-            time_elapsed_hours = (time_elapsed.total_seconds/3600)
+            time_elapsed_hours = (int(time_elapsed.total_seconds())/3600)
 
             if (time_elapsed_hours >= 1) or (set_up):
                 if not set_up:
@@ -284,21 +265,14 @@ class AWSClient(BaseLogger):
                     self.syslogger.info("Failed to set up AWS client resource. Will try again in some time...")
             else:
                 self.syslogger.info("Credentials should still be valid, will check again in 15 mins..")
-                while not self.poison_pill.is_set():
-                    poisoned = self.poison_pill.wait(900) # Sleep for 15 mins before checking validity of credentials again
 
-                if poisoned:
-                    self.syslogger.info("Received poison pill, terminating setup_ec2_client thread...")
-                    return {"status": "error", "output": "Received poison pill, terminating setup_ec2_client thread", "resource": None}
-                else:
+                while not self.poison_pill.wait(900): # Sleep for 15 mins before checking validity of credentials again
                     self.syslogger.info("Completed 15 mins, checking credentials again")
 
-
-            if not self.exit:
-                return {"status": "success", "output": "EC2 resource client created", "resource": self.resource}
-            else:
-                return {"status": "error", "output": "Failed to create EC2 resource client", "resource": None}
-
+                if self.poison_pill.is_set():
+                    self.syslogger.info("Received poison pill, terminating setup_ec2_client thread...")
+                    return {"status": "error", "output": "Received poison pill, terminating setup_ec2_client thread", "resource": None}
+                    
 
 
 
@@ -308,40 +282,66 @@ class SLHaBfd(BaseLogger):
 
 
     def __init__(self,
+                 syslogger=None,
                  syslog_file=None,
                  syslog_server=None,
                  syslog_port=None,
                  grpc_server_ip="127.0.0.1",
                  grpc_server_port=57777,
                  config_json=None,
-                 aws_resource=None):
+                 aws_resource=None,
+                 aws_instance_id=None):
 
-        super(SLHaBfd, self).__init__(syslog_file=syslog_file,
-                                      syslog_server=syslog_server,
-                                      syslog_port=syslog_port)
+        # super(SLHaBfd, self).__init__(syslog_file=syslog_file,
+        #                               syslog_server=syslog_server,
+        #                               syslog_port=syslog_port)
 
+        
+        if syslogger is None:
+            logging.error("Initialize the baselogger class and pass in the syslogger handle. Aborting...")
+            self.exit = True
+            return
+        else:
+            self.syslogger = syslogger
 
         if aws_resource is None:
             self.syslogger.info("AWS resource client not provided, aborting...")
             self.exit = True
             return
+        else:
+            self.aws_resource = aws_resource
+
+        if aws_instance_id is None:
+            self.syslogger.info("AWS Instance ID of local node not provided, aborting...")
+            self.exit = True
+            return
+        else:
+            self.aws_instance_id = aws_instance_id
 
         if config_json is None:
             self.syslogger.info("Input json config file not provided, aborting...")
             self.exit = True 
             return
+        else:
+            self.config_json = config_json
 
-
+        self.instance = aws_resource.Instance(aws_instance_id)
+        self.threadList = []
         self.syslogger.info("Using GRPC Server IP(%s) Port(%s)" %(grpc_server_ip, grpc_server_port))
        
         # Create the channel for gRPC.
         self.channel = grpc.insecure_channel(str(grpc_server_ip)+":"+
                                                    str(grpc_server_port))
         self.poison_pill= Event()
+        self.failover_event = Event()
+        self.failover_complete = Event()
+        self.action_hash = {}
+        self.action_pool()
+
         # Spawn a thread to Initialize the client and listen on notifications
         # The thread will run in the background
         self.global_init(self.channel)
-
+        self.threadList.append(self.global_thread)
 
         # Create the SL-BFD gRPC stub and register
         self.stub = sl_bfd_ipv4_pb2_grpc.SLBfdv4OperStub(self.channel)
@@ -366,6 +366,68 @@ class SLHaBfd(BaseLogger):
 
 
     
+    #def hello_publisher(self):
+
+
+
+    #def hello_subscriber(self):
+
+
+    def action_pool(self):
+
+        action = self.config_json["config"]["action"]
+        if action["method"] == "secondary_ip_shift":
+            if not "method_params" in action:
+                self.syslogger.info("No method_params specified for action=secondary_ip_shift...") 
+                return  {"status": "error", "output": "No method_params specified"} 
+            else:
+                try:
+                    thread_index=0
+                    for interface in action["method_params"]["intf_list"]:
+                        secondary_ip = interface["secondary_ip"]
+                        interface_num = interface["instance_intf_number"]
+                        
+                        thread = threading.Thread(target=self.action_thread_secondary_ip_shift, args=(secondary_ip, interface_num, thread_index,))
+                        self.syslogger.info("Starting Action thread "+str(thread.name))
+                        self.threadList.append(thread)
+                        thread.daemon = True                            # Daemonize thread
+                        thread.start()                                  # Start the execution
+
+                        thread_index +=1
+                        # self.syslogger.info("Current IP addresses on interface:")
+                        # self.syslogger.info(self.instance.network_interfaces[interface_num].private_ip_addresses)
+                except Exception as e:
+                    self.syslogger.info("Failed to set up action thread pool for secondary_ip shift. Error: "+str(e))
+
+
+    def action_thread_secondary_ip_shift(self, secondary_ip=None, interface_num=None, thread_index=None):
+        
+        while True:
+            if self.poison_pill.is_set():
+                self.syslogger.info("Poison Pill received, terminating action thread")
+                return
+
+            if any([secondary_ip, interface_num, thread_index]) is None:
+                self.syslogger.info("Missing input parameters")
+                self.syslogger.info(secondary_ip)
+                self.syslogger.info(interface_num)
+                self.syslogger.info(thread_index)
+            else:
+                self.action_hash[thread_index] = False
+                self.failover_event.wait() # Sleep until the failover event occurs
+
+                if self.failover_event.is_set(): 
+                    try:
+                        self.instance.network_interfaces[int(interface_num)].assign_private_ip_addresses(AllowReassignment=True, 
+                                                                                                PrivateIpAddresses=[secondary_ip])
+                        self.action_hash[thread_index] = True
+                        self.failover_complete.wait()
+                    except Exception as e:
+                        self.syslogger.info("Failed to apply secondary_ip:"+str(secondary_ip)+" to interface num: "+interface_num)
+
+
+          
+
     def bfd_regop(self, bfd_regop):
         
 
@@ -377,7 +439,7 @@ class SLHaBfd(BaseLogger):
         #
         Timeout = 10 # Seconds
         response = self.stub.SLBfdv4RegOp(bfdRegMsg, Timeout)
-        self.syslogger.info(response)
+        #self.syslogger.info(response)
 
         #
         # Check the received result from the Server
@@ -441,7 +503,7 @@ class SLHaBfd(BaseLogger):
 
         response = self.stub.SLBfdv4SessionOp(bfdv4Msg, Timeout)
 
-        self.syslogger.info(response)
+        #self.syslogger.info(response)
 
         # bfdGetMsg = sl_bfd_common_pb2.SLBfdGetMsg()
 
@@ -465,17 +527,24 @@ class SLHaBfd(BaseLogger):
             while True:
                 self.syslogger.info("Starting listener for BFD events")
                 # Set Timeout if needed
-                for response in self.stub.SLBfdv4GetNotifStream(bfd_get_notif_msg):
-                    if self.poison_pill.is_set():
-                        self.syslogger.info("Poison Pill received, terminating BFD notifications thread")
-                        return
+                self.bfd_response_stream = self.stub.SLBfdv4GetNotifStream(bfd_get_notif_msg)
+                for response in self.bfd_response_stream:
+                    #if self.poison_pill.is_set():
+                    #    self.syslogger.info("Poison Pill received, terminating BFD notifications thread")
+                    #    return
 
                     self.syslogger.info(response)
                     response_dict = json_format.MessageToDict(response)
                     if response_dict['Session']['State']['Status'] == 'SL_BFD_SESSION_DOWN':
-                       self.syslogger.info("Peer is down, check current HA state and perform action...")
-         
+                        self.syslogger.info("Peer is down, check current HA state and perform action...")            
+                        self.failover_event.set()
+                        while not all(val==True for val in self.action_hash.values()):
+                            self.failover_complete.wait(0.05)
 
+                        self.failover_event.clear()
+                        self.failover_complete.set()
+                            
+                        
                        # instance = resource.Instance(instance_id)
                        # instance.network_interfaces[2].assign_private_ip_addresses(AllowReassignment=True, PrivateIpAddresses=['172.31.105.10'])
                        # self.syslogger.info("Assigned Secondary IP address to local instance interface")
@@ -518,42 +587,49 @@ class SLHaBfd(BaseLogger):
         #Timeout = 365*24*60*60 # Seconds
         #Timeout = 5
 
-        while True:
-            # This for loop will never end unless the server closes the session
-            # Set Timeout later if needed
-            for response in stub.SLGlobalInitNotif(init_msg):
-                if response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_VERSION:
-                    if (sl_common_types_pb2.SLErrorStatus.SL_SUCCESS ==
-                            response.ErrStatus.Status) or \
-                        (sl_common_types_pb2.SLErrorStatus.SL_INIT_STATE_CLEAR ==
-                            response.ErrStatus.Status) or \
-                        (sl_common_types_pb2.SLErrorStatus.SL_INIT_STATE_READY ==
-                            response.ErrStatus.Status):
-                        self.syslogger.info("Server Returned 0x%x, Version %d.%d.%d" %(
-                            response.ErrStatus.Status,
-                            response.InitRspMsg.MajorVer,
-                            response.InitRspMsg.MinorVer,
-                            response.InitRspMsg.SubVer))
-                        self.syslogger.info("Successfully Initialized, connection established!")
-                        # Any thread waiting on this event can proceed
-                        event.set()
+        try:
+            while True:
+                # This for loop will never end unless the server closes the session
+                # Set Timeout later if needed
+                self.global_event_stream = stub.SLGlobalInitNotif(init_msg)
+                for response in self.global_event_stream:
+                    if response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_VERSION:
+                        if (sl_common_types_pb2.SLErrorStatus.SL_SUCCESS ==
+                                response.ErrStatus.Status) or \
+                            (sl_common_types_pb2.SLErrorStatus.SL_INIT_STATE_CLEAR ==
+                                response.ErrStatus.Status) or \
+                            (sl_common_types_pb2.SLErrorStatus.SL_INIT_STATE_READY ==
+                                response.ErrStatus.Status):
+                            self.syslogger.info("Server Returned 0x%x, Version %d.%d.%d" %(
+                                response.ErrStatus.Status,
+                                response.InitRspMsg.MajorVer,
+                                response.InitRspMsg.MinorVer,
+                                response.InitRspMsg.SubVer))
+                            self.syslogger.info("Successfully Initialized, connection established!")
+                            # Any thread waiting on this event can proceed
+                            event.set()
+                        else:
+                            self.syslogger.info("client init error code 0x%x", response.ErrStatus.Status)
+                            return
+                    elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_HEARTBEAT:
+                        self.syslogger.info("Received HeartBeat")
+                        #if self.poison_pill.is_set():
+                        #    self.syslogger.info("Poison Pill received, terminating global init thread")
+                        #    return
+                    elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_ERROR:
+                        if (sl_common_types_pb2.SLErrorStatus.SL_NOTIF_TERM ==
+                                response.ErrStatus.Status):
+                            self.syslogger.info("Received notice to terminate. Client Takeover?")
+                            return
+                        else:
+                            self.syslogger.info("Error not handled:", response)
                     else:
-                        self.syslogger.info("client init error code 0x%x", response.ErrStatus.Status)
+                        self.syslogger.info("client init unrecognized response %d", response.EventType)
                         return
-                elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_HEARTBEAT:
-                    self.syslogger.info("Received HeartBeat")
-                elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_ERROR:
-                    if (sl_common_types_pb2.SLErrorStatus.SL_NOTIF_TERM ==
-                            response.ErrStatus.Status):
-                        self.syslogger.info("Received notice to terminate. Client Takeover?")
-                        return
-                    else:
-                        self.syslogger.info("Error not handled:", response)
-                else:
-                    self.syslogger.info("client init unrecognized response %d", response.EventType)
-                    return
 
-
+        except Exception as e:
+            self.syslogger.info("Exception occured while listening to Global HeartBeat notifications")
+            self.syslogger.info(e)
 
     def global_thread(self, stub, event):
         self.syslogger.info("Global thread spawned")
@@ -622,7 +698,7 @@ class SLHaBfd(BaseLogger):
 # Setup the GRPC channel with the server, and issue RPCs
 #
 if __name__ == '__main__':
-
+    #pdb.set_trace()
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config-file', dest='config_file', default=None,
                     help='Specify path to the json config file for HA App')
@@ -647,14 +723,19 @@ if __name__ == '__main__':
     else:
         endpoint_url = "ec2.us-west-2.amazonaws.com"
 
-    aws_ec2_resource = AWSClient(endpoint_url)
+    aws_client = AWSClient(syslogger=base_logger.syslogger,
+                           endpoint_url=endpoint_url)
 
-    
-    if aws_ec2_resource["status"] == "error":
+    if not aws_client.exit:
+        if aws_client.resource is not None:
+            base_logger.syslogger.info("EC2 resource client created")
+        else:
+            base_logger.syslogger.info("Failed to create AWS client resource. Aborting...")
+            sys.exit(1)
+    else:
         base_logger.syslogger.info("Failed to create AWS client resource. Aborting...")
         sys.exit(1)
 
-    
 
     if "syslog_file" in json_config["config"]:
         syslog_file = json_config["config"]["syslog_file"]
@@ -683,18 +764,21 @@ if __name__ == '__main__':
     
     # Set up the SLBFD object
 
-    sl_bfd_ha =  SLHaBfd(syslog_file=syslog_file,
+    sl_bfd_ha =  SLHaBfd(syslogger=base_logger.syslogger,
+                         syslog_file=syslog_file,
                          syslog_server=syslog_server,
                          syslog_port=syslog_port,
                          grpc_server_ip=grpc_server,
                          grpc_server_port=grpc_port,
                          config_json=json_config,
-                         aws_resource=aws_ec2_resource)
+                         aws_resource=aws_client.resource,
+                         aws_instance_id=json_config["config"]["instance_id"])
+                         #aws_instance_id=aws_client.instance_id)
 
 
     # Register our handler for keyboard interrupt and termination signals
-    signal.signal(signal.SIGINT, partial(handler, sl_interface, sl_bfd_rtr1, sl_bfd_rtr2 ))
-    signal.signal(signal.SIGTERM, partial(handler, sl_interface, sl_bfd_rtr1, sl_bfd_rtr2))
+    signal.signal(signal.SIGINT, partial(handler, sl_bfd_ha, aws_client))
+    signal.signal(signal.SIGTERM, partial(handler, sl_bfd_ha, aws_client))
 
     # The process main thread does nothing but wait for signals
     signal.pause() 
