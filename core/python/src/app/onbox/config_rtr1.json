@@ -3,7 +3,6 @@
     	"ec2_private_endpoint_url": "https://vpce-0786bfdf8aad8840c-vacmlroq-us-west-2a.ec2.us-west-2.vpce.amazonaws.com",
     	"grpc_server": "127.0.0.1",
     	"grpc_port": 57777,
-    	"router_id": "172.31.105.206",
         "action": {
             "method": "secondary_ip_shift",
             "method_params": {

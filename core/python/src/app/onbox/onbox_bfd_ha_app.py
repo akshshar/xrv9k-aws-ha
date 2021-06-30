@@ -44,21 +44,25 @@ AWS_METADATA_URL_LATEST="http://169.254.169.254/latest"
 
 EXIT_FLAG = False
 #POSIX signal handler to ensure we shutdown cleanly
-def handler(sl_bfd_ha, aws_ec2_resource, signum, frame):
+def handler(sl_bfd_ha, signum, frame):
     global EXIT_FLAG
 
     if not EXIT_FLAG:
         EXIT_FLAG = True
-        aws_ec2_resource.syslogger.info("Stopping AWS EC2 resource thread")
-        aws_ec2_resource.poison_pill.set()
-        for thread in aws_ec2_resource.threadList:
-          aws_ec2_resource.syslogger.info("Waiting for %s to finish..." %(thread.name))
+        sl_bfd_ha.aws_client.syslogger.info("Stopping AWS EC2 resource thread")
+        sl_bfd_ha.aws_client.poison_pill.set()
+        for thread in sl_bfd_ha.aws_client.threadList:
+          sl_bfd_ha.aws_client.syslogger.info("Waiting for %s to finish..." %(thread.name))
           thread.join()
         sl_bfd_ha.syslogger.info("Unregistering SL-API services...")    
         sl_bfd_ha.bfd_regop(sl_common_types_pb2.SL_REGOP_UNREGISTER)
         sl_bfd_ha.bfd_response_stream.cancel()
         sl_bfd_ha.global_event_stream.cancel()
-        #sl_bfd_ha.poison_pill.set()
+        sl_bfd_ha.intf_response_stream.cancel()
+        sl_bfd_ha.poison_pill.set()
+        sl_bfd_ha.failover_event.set()
+        sl_bfd_ha.failover_complete.set()
+        sl_bfd_ha.stop_check_ha_state.set()
         for thread in sl_bfd_ha.threadList:
            sl_bfd_ha.syslogger.info("Waiting for %s to finish..." %(thread.name))
            thread.join()
@@ -282,50 +286,84 @@ class SLHaBfd(BaseLogger):
 
 
     def __init__(self,
-                 syslogger=None,
-                 syslog_file=None,
-                 syslog_server=None,
-                 syslog_port=None,
-                 grpc_server_ip="127.0.0.1",
-                 grpc_server_port=57777,
-                 config_json=None,
-                 aws_resource=None,
-                 aws_instance_id=None):
+                 config_file="/root/config.json"):
 
-        # super(SLHaBfd, self).__init__(syslog_file=syslog_file,
-        #                               syslog_server=syslog_server,
-        #                               syslog_port=syslog_port)
-
-        
-        if syslogger is None:
-            logging.error("Initialize the baselogger class and pass in the syslogger handle. Aborting...")
-            self.exit = True
-            return
-        else:
-            self.syslogger = syslogger
-
-        if aws_resource is None:
-            self.syslogger.info("AWS resource client not provided, aborting...")
-            self.exit = True
-            return
-        else:
-            self.aws_resource = aws_resource
-
-        if aws_instance_id is None:
-            self.syslogger.info("AWS Instance ID of local node not provided, aborting...")
-            self.exit = True
-            return
-        else:
-            self.aws_instance_id = aws_instance_id
-
-        if config_json is None:
-            self.syslogger.info("Input json config file not provided, aborting...")
+        self.exit =  False
+        if config_file is None:
+            logging.error("Input json config file not provided, aborting...")
             self.exit = True 
             return
         else:
-            self.config_json = config_json
+            self.config_file = config_file
 
-        self.instance = aws_resource.Instance(aws_instance_id)
+
+        # Read and load the input config.json file
+        try:
+            with open(self.config_file, 'r') as json_config_fd:
+                self.config_json = json.load(json_config_fd)
+        except Exception as e:
+            logging.error("Failed to load config file. Aborting...")
+            self.exit = True
+            return
+
+        if "syslog_file" in self.config_json["config"]:
+            syslog_file = self.config_json["config"]["syslog_file"]
+        else:
+            syslog_file = None 
+
+        if ("syslog_server" in self.config_json["config"]) and ("syslog_port" in self.config_json["config"]):
+            syslog_server = self.config_json["config"]["syslog_server"]
+            syslog_port = self.config_json["config"]["syslog_port"]
+        else:
+            syslog_server = None
+            syslog_port = None
+
+
+
+        super(SLHaBfd, self).__init__(syslog_file=syslog_file,
+                                      syslog_server=syslog_server,
+                                      syslog_port=syslog_port)
+
+
+        if "ec2_private_endpoint_url" in self.config_json["config"]:
+            endpoint_url = self.config_json["config"]["ec2_private_endpoint_url"]
+        else:
+            endpoint_url = "ec2.us-west-2.amazonaws.com"
+
+        self.aws_client = AWSClient(syslogger=self.syslogger,
+                                    endpoint_url=endpoint_url)
+
+        if not self.aws_client.exit:
+            if self.aws_client.resource is not None:
+                self.syslogger.info("EC2 resource client created")
+            else:
+                self.syslogger.info("Failed to create AWS client resource. Aborting...")
+                self.exit = True
+                return
+        else:
+            self.syslogger.info("Failed to create AWS client resource. Aborting...")
+            self.exit = True
+            return
+
+
+        
+        self.instance_id = self.aws_client.instance_id
+        #self.instance_id = self.config_json["config"]["instance_id"]
+     
+        if "grpc_server" in self.config_json["config"]:
+            grpc_server_ip = self.config_json["config"]["grpc_server"]
+        else:
+            self.syslogger.info("gRPC server not specified in input config file, defaulting to 127.0.0.1")
+            grpc_server_ip ="127.0.0.1"
+
+        if "grpc_port" in self.config_json["config"]:
+            grpc_server_port = self.config_json["config"]["grpc_port"]
+        else:
+            self.syslogger.info("gRPC port not specified in input config file, defaulting to 57777")
+            grpc_server_port = 57777
+    
+
+        
         self.threadList = []
         self.syslogger.info("Using GRPC Server IP(%s) Port(%s)" %(grpc_server_ip, grpc_server_port))
        
@@ -335,7 +373,12 @@ class SLHaBfd(BaseLogger):
         self.poison_pill= Event()
         self.failover_event = Event()
         self.failover_complete = Event()
+        self.stop_check_ha_state =  Event()
         self.action_hash = {}
+        self.secondary_ip_hash = {}
+        self.interface_state_hash = {}
+        self.ha_state="UNKNOWN"
+        self.check_secondary_ip()
         self.action_pool()
 
         # Spawn a thread to Initialize the client and listen on notifications
@@ -345,32 +388,115 @@ class SLHaBfd(BaseLogger):
 
         # Create the SL-BFD gRPC stub and register
         self.stub = sl_bfd_ipv4_pb2_grpc.SLBfdv4OperStub(self.channel)
+
+        # Intf Stub to check intf status before failover ensuring make before break
+        self.intfstub = sl_interface_pb2_grpc.SLInterfaceOperStub(self.channel)
+
         self.bfd_regop(sl_common_types_pb2.SL_REGOP_REGISTER)
         self.bfd_regop(sl_common_types_pb2.SL_REGOP_EOF)
 
+        self.intf_regop(sl_common_types_pb2.SL_REGOP_REGISTER)
+        self.intf_regop(sl_common_types_pb2.SL_REGOP_EOF)
+
+
         try:
-            for bfd_session in config_json["config"]["bfd_sessions"]:
+            for bfd_session in self.config_json["config"]["bfd_sessions"]:
                 bfd_session["bfd_oper"] = sl_common_types_pb2.SL_OBJOP_UPDATE
                 self.bfd_op(**bfd_session)
+                self.intf_enable_notif(bfd_session['intf_name'])
         
         except Exception as e:
             self.syslogger.info("Failed to set up BFD sessions. Error: "+str(e))
             self.exit = True
 
 
-        for fn in [self.bfd_notifications]:
+        for fn in [self.bfd_notifications, self.intf_notifications, self.check_ha_state]:
             thread = threading.Thread(target=fn, args=())
             self.threadList.append(thread)
             thread.daemon = True                            # Daemonize thread
             thread.start()                                  # Start the execution
 
 
-    
-    #def hello_publisher(self):
 
 
+    def check_ha_state(self):
+        while not self.stop_check_ha_state.is_set():
+            self.stop_check_ha_state.wait(10)
+            self.syslogger.info("Periodic HA state check...")
+            self.check_secondary_ip(debug=False)
+            self.converge_ha_state(debug=False) 
+            self.syslogger.info("HA State: "+str(self.ha_state))
 
-    #def hello_subscriber(self):
+
+    def check_secondary_ip(self, debug=True):
+        if debug:
+            self.syslogger.setLevel(logging.DEBUG)
+        else:
+            self.syslogger.setLevel(logging.INFO)
+
+        action = self.config_json["config"]["action"]
+        if action["method"] == "secondary_ip_shift":
+            if not "method_params" in action:
+                self.syslogger.info("No method_params specified for action=secondary_ip_shift...") 
+                return  {"status": "error", "output": "No method_params specified"} 
+            else:
+                try:
+                    for interface in action["method_params"]["intf_list"]:
+                        secondary_ip = interface["secondary_ip"]
+                        interface_num = interface["instance_intf_number"]
+                        
+                        instance = self.aws_client.resource.Instance(self.instance_id)
+                        self.syslogger.debug(instance.network_interfaces)
+                        intf_private_ips = instance.network_interfaces[int(interface_num)].private_ip_addresses
+                        intf_eni_id = instance.network_interfaces[int(interface_num)].id
+                        self.syslogger.debug(intf_private_ips)
+                        match=False
+                        for intf_private_ip in intf_private_ips:
+                            if not intf_private_ip['Primary']:
+                                if intf_private_ip['PrivateIpAddress'] == secondary_ip:
+                                    self.syslogger.debug("Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
+                                    self.secondary_ip_hash[str(interface_num)] = True
+                                    match=True
+                                    break
+
+                        if not match:            
+                            self.syslogger.debug(" NO Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
+                            self.secondary_ip_hash[str(interface_num)] = False
+
+                except Exception as e:
+                    self.syslogger.info("Failed to check the current secondary IP status on instance. Error: "+str(e))
+ 
+        self.syslogger.setLevel(logging.INFO)
+           
+    def converge_ha_state(self, action="secondary_ip_shift", debug=True):
+        # Three HA states are defined for a node
+        # UNKNOWN:  This is the default state when a node first boots up (HA app comes up) or post failure + reboot
+        # ACTIVE:  When the current node is handling traffic (If secondary_ip_shift action is used, then current node must own the secondary IPs)
+        # STANDBY: When the current node is not handling traffic (If secondary_ip_shift action is used, then current node does not own the secondary IPs)
+
+        # This method sets the HA state of the node when invoked
+
+        if debug:
+            self.syslogger.setLevel(logging.DEBUG)
+        else:
+            self.syslogger.setLevel(logging.INFO)
+        try:
+            if action == "secondary_ip_shift":
+                self.syslogger.debug(self.secondary_ip_hash)
+                if all(val==True for val in self.secondary_ip_hash.values()):
+                    self.syslogger.debug("All the secondary IPs assigned to local node, setting ha_state to ACTIVE")
+                    self.ha_state = "ACTIVE"
+                elif all(val==False for val in self.secondary_ip_hash.values()):
+                    self.syslogger.debug("None of the secondary IPs assigned to local node, setting ha_state to STANDBY")
+                    self.ha_state = "STANDBY"
+                else:
+                    self.syslogger.debug("Not all interfaces converged properly, setting ha_state to UNKNOWN")
+                    self.ha_state = "UNKNOWN"
+        except Exception as e:
+            self.syslogger.info("Failed to converge HA state. Set to UNKNOWN. Error: "+str(e))
+            self.ha_state = "UNKNOWN"
+
+        self.syslogger.setLevel(logging.INFO)
 
 
     def action_pool(self):
@@ -414,23 +540,73 @@ class SLHaBfd(BaseLogger):
                 self.syslogger.info(thread_index)
             else:
                 self.action_hash[thread_index] = False
+                self.syslogger.info("Inside Action thread: Waiting for failover event")
                 self.failover_event.wait() # Sleep until the failover event occurs
 
+                self.syslogger.info("Inside Action thread: Failover event detected, perform action")
+                if self.poison_pill.is_set():
+                    self.syslogger.info("Poison Pill received, terminating action thread")
+                    return
                 if self.failover_event.is_set(): 
                     try:
-                        self.instance.network_interfaces[int(interface_num)].assign_private_ip_addresses(AllowReassignment=True, 
+                        instance = self.aws_client.resource.Instance(self.instance_id)
+                        intf_private_ips = instance.network_interfaces[int(interface_num)].private_ip_addresses
+                        self.syslogger.info(intf_private_ips)
+
+                        instance.network_interfaces[int(interface_num)].assign_private_ip_addresses(AllowReassignment=True, 
                                                                                                 PrivateIpAddresses=[secondary_ip])
                         self.action_hash[thread_index] = True
+                        self.syslogger.info("Inside Action thread: Completed Action. Waiting for failover complete event")
                         self.failover_complete.wait()
+                        self.syslogger.info("Inside Action thread: Failover complete")
+                        if self.poison_pill.is_set():
+                            self.syslogger.info("Poison Pill received, terminating action thread")
+                            return
                     except Exception as e:
-                        self.syslogger.info("Failed to apply secondary_ip:"+str(secondary_ip)+" to interface num: "+interface_num)
+                        self.syslogger.info("Failed to apply secondary_ip:"+str(secondary_ip)+" to interface num: "+str(interface_num))
 
 
-          
+
+    def intf_regop(self, intf_regop):
+        
+        intfRegMsg = sl_interface_pb2.SLInterfaceGlobalsRegMsg()
+        intfRegMsg.Oper = intf_regop
+
+        #
+        # Make an RPC call
+        #
+        Timeout = 10 # Seconds
+        response = self.intfstub.SLInterfaceGlobalsRegOp(intfRegMsg, Timeout)
+        #self.syslogger.info(response)
+
+        #
+        # Check the received result from the Server
+        #
+        try:
+            if (response.StatusSummary.Status ==
+                sl_common_types_pb2.SLErrorStatus.SL_SUCCESS):
+                self.syslogger.info("Interface %s Success!" %(
+                    list(sl_common_types_pb2.SLRegOp.keys())[intf_regop]))
+            else:
+                self.syslogger.info("Error code for Interface %s is 0x%x! Response:" % (
+                    list(sl_common_types_pb2.SLRegOp.keys())[intf_regop],
+                    response.StatusSummary.Status
+                ))
+                self.syslogger.info(response)
+                # If we have partial failures within the batch, let's print them
+                if (response.StatusSummary.Status ==
+                    sl_common_types_pb2.SLErrorStatus.SL_SOME_ERR):
+                    for result in response.Results:
+                        self.syslogger.info("Error code for %s is 0x%x" %(result.VrfName,
+                            result.ErrStatus.Status
+                        ))
+                return
+        except Exception as e:
+            self.syslogger.info(e)
+
 
     def bfd_regop(self, bfd_regop):
         
-
         bfdRegMsg = sl_bfd_common_pb2.SLBfdRegMsg()
         bfdRegMsg.Oper = bfd_regop
 
@@ -448,10 +624,10 @@ class SLHaBfd(BaseLogger):
             if (response.StatusSummary.Status ==
                 sl_common_types_pb2.SLErrorStatus.SL_SUCCESS):
                 self.syslogger.info("BFD %s Success!" %(
-                    list(sl_common_types_pb2.SLRegOp.keys())[oper]))
+                    list(sl_common_types_pb2.SLRegOp.keys())[bfd_regop]))
             else:
                 self.syslogger.info("Error code for BFD %s is 0x%x! Response:" % (
-                    list(sl_common_types_pb2.SLRegOp.keys())[oper],
+                    list(sl_common_types_pb2.SLRegOp.keys())[bfd_regop],
                     response.StatusSummary.Status
                 ))
                 self.syslogger.info(response)
@@ -467,10 +643,37 @@ class SLHaBfd(BaseLogger):
             self.syslogger.info(e)
 
 
+    def intf_enable_notif(self,
+                          intf_name=None):
+
+
+        if intf_name is not None:
+            intf_notif_op = sl_interface_pb2.SLInterfaceNotifMsg()
+
+            intf_notif_op.Oper = sl_common_types_pb2.SL_NOTIFOP_ENABLE
+            intf_name_list = []
+            interface = sl_common_types_pb2.SLInterface()
+            interface.Name = intf_name
+
+            # Possible states in hash = SL_IF_STATE_UNKNOWN / SL_IF_STATE_DOWN / SL_IF_STATE_UP
+            self.interface_state_hash[intf_name] = "SL_IF_STATE_UNKNOWN"
+            intf_name_list.append(interface)
+
+            intf_notif_op.Entries.extend(intf_name_list)
+              
+            try:
+                Timeout = 10
+                response = self.intfstub.SLInterfaceNotifOp(intf_notif_op, Timeout)
+            except Exception as e:
+                self.syslogger.info("Failed to enable notifications for interface: "+str(intf_name)+". Error: "+str(e))
+
+
+
     def bfd_op(self, 
                bfd_oper=None,
                session_type=None,
                intf_name=None,
+               source_ip=None,
                neigh_ip=None,
                bfd_desired_tx_int_usec=50000,
                detect_multiplier=3,
@@ -484,11 +687,13 @@ class SLHaBfd(BaseLogger):
 
         if session_type == "SINGLE_HOP":
             bfdv4session.Key.Type = sl_bfd_common_pb2.SLBfdType.SL_BFD_SINGLE_HOP
+            bfdv4session.Key.Interface.Name = intf_name
         elif session_type == "MULTI_HOP":
             bfdv4session.Key.Type = sl_bfd_common_pb2.SLBfdType.SL_BFD_MULTI_HOP
+            bfdv4session.Key.SourceAddr = int(ipaddress.ip_address(source_ip))
 
         bfdv4session.Key.VrfName = vrf_name
-        bfdv4session.Key.Interface.Name = intf_name
+        #bfdv4session.Key.Interface.Name = intf_name
         bfdv4session.Key.NbrAddr = int(ipaddress.ip_address(neigh_ip))
         bfdv4session.Config.DesiredTxIntUsec = int(bfd_desired_tx_int_usec)
         bfdv4session.Config.DetectMultiplier = int(detect_multiplier)
@@ -518,6 +723,31 @@ class SLHaBfd(BaseLogger):
 
 
 
+
+    def intf_notifications(self):
+
+        intf_getnotif_msg = sl_interface_pb2.SLInterfaceGetNotifMsg()
+
+        try:
+            while True:
+                if self.poison_pill.is_set():
+                    self.syslogger.info("Poison Pill received, terminating Interface notifications thread")
+                    return
+                self.syslogger.info("Starting listener for interface events")
+                self.intf_response_stream = self.intfstub.SLInterfaceGetNotifStream(intf_getnotif_msg)
+                for response in self.intf_response_stream:
+                    self.syslogger.info(response)
+                    response_dict = json_format.MessageToDict(response)
+                    intf_name = response_dict["Info"]["SLIfInfo"]["Name"]
+                    state = response_dict["Info"]["IfState"]
+                    self.interface_state_hash[intf_name] = state
+                    self.syslogger.info(self.interface_state_hash)
+
+        except Exception as e:
+            print("Exception occured while listening to Interface notifications")
+            print(e)
+
+
     def bfd_notifications(self):
         bfd_get_notif_msg = sl_bfd_common_pb2.SLBfdGetNotifMsg()
         #Timeout = 3600*24*365
@@ -525,25 +755,69 @@ class SLHaBfd(BaseLogger):
         #instance_id=INSTANCE_ID
         try:
             while True:
+                if self.poison_pill.is_set():
+                    self.syslogger.info("Poison Pill received, terminating BFD notifications thread")
+                    return
+
+                self.converge_ha_state()
                 self.syslogger.info("Starting listener for BFD events")
                 # Set Timeout if needed
                 self.bfd_response_stream = self.stub.SLBfdv4GetNotifStream(bfd_get_notif_msg)
                 for response in self.bfd_response_stream:
-                    #if self.poison_pill.is_set():
-                    #    self.syslogger.info("Poison Pill received, terminating BFD notifications thread")
-                    #    return
-
                     self.syslogger.info(response)
                     response_dict = json_format.MessageToDict(response)
-                    if response_dict['Session']['State']['Status'] == 'SL_BFD_SESSION_DOWN':
-                        self.syslogger.info("Peer is down, check current HA state and perform action...")            
-                        self.failover_event.set()
-                        while not all(val==True for val in self.action_hash.values()):
-                            self.failover_complete.wait(0.05)
 
-                        self.failover_event.clear()
-                        self.failover_complete.set()
-                            
+                    # Listen to BFD DOWN notification only in STANDBY ha_state
+
+                    if response_dict['Session']['State']['Status'] == 'SL_BFD_SESSION_DOWN':
+                        if self.ha_state == "STANDBY":
+                            # try:
+                            #     # Check if the local interface associated with the BFD session is up before failing over
+                            #     self.syslogger.info(response_dict['Session']['Key']['Interface']['Name'])
+                            #     interfaceGetMsg = sl_interface_pb2.SLInterfaceGetMsg()
+                            #     interfaceGetMsg.Key.Name = response_dict['Session']['Key']['Interface']['Name']
+                            #     Timeout = 0.05
+                            #     response = self.intfstub.SLInterfaceGet(interfaceGetMsg, Timeout)
+                            #     self.syslogger.info(response)
+                            #     self.syslogger.info(response.Entries)
+                            #     self.syslogger.info(response.Entries[0])
+                            #     self.syslogger.info(response.Entries[0].IfState)
+
+                            # except Exception as e:
+                            #     self.syslogger.info("Exception occured while checking interface state")
+                            #     self.syslogger.info(e)
+
+                            self.syslogger.info(self.interface_state_hash[response_dict['Session']['Key']['Interface']['Name']])
+                            intf_name = response_dict['Session']['Key']['Interface']['Name']
+                            if self.interface_state_hash[intf_name] == "SL_IF_STATE_DOWN":
+                                self.syslogger.info("Local interface went down, ignore BFD session event")
+                            else:
+                                self.syslogger.info("BFD Peer is DOWN. Current HA state is STANDBY, performing configured action...")            
+                                self.failover_event.set()
+                                while not all(val==True for val in self.action_hash.values()):
+                                    self.failover_complete.wait(0.05)
+
+                                self.syslogger.info(self.action_hash)
+                                self.failover_event.clear()
+                                self.failover_complete.set()
+                            # self.syslogger.info("Reconverging HA state...")
+                            # # Reconverge ha_state
+                            # self.check_secondary_ip()
+                            # self.converge_ha_state()
+
+                        elif self.ha_state == "ACTIVE":
+                            self.syslogger.info("Current HA state is Active. Ignoring BFD session DOWN notifications")
+                            # Reconverge ha_state
+                            # self.syslogger.info("Reconverging HA state...")
+                            # self.check_secondary_ip()
+                            # self.converge_ha_state()
+                        else:
+                            self.syslogger.info("Current HA state is UNKNOWN - ignore current BFD notifications and reconverge HA state")
+
+
+                        self.syslogger.info("Reconverging HA state...")
+                        self.check_secondary_ip()
+                        self.converge_ha_state()       
                         
                        # instance = resource.Instance(instance_id)
                        # instance.network_interfaces[2].assign_private_ip_addresses(AllowReassignment=True, PrivateIpAddresses=['172.31.105.10'])
@@ -589,6 +863,9 @@ class SLHaBfd(BaseLogger):
 
         try:
             while True:
+                if self.poison_pill.is_set():
+                    self.syslogger.info("Poison Pill received, terminating global init thread")
+                    return
                 # This for loop will never end unless the server closes the session
                 # Set Timeout later if needed
                 self.global_event_stream = stub.SLGlobalInitNotif(init_msg)
@@ -700,85 +977,27 @@ class SLHaBfd(BaseLogger):
 if __name__ == '__main__':
     #pdb.set_trace()
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config-file', dest='config_file', default=None,
+    parser.add_argument('-c', '--config-file', dest='config_file', default="/root/config.json",
                     help='Specify path to the json config file for HA App')
 
     argobj= parser.parse_args()
-    base_logger = BaseLogger()
 
     if argobj.config_file is None:
-        base_logger.syslogger.info("No Input config provided, bailing out.... Please provide a compatible json input file")
+        logging.error("No Input config provided, bailing out.... Please provide a compatible json input file")
         sys.exit(1)
 
-    # Read and load the input config.json file
-    try:
-        with open(argobj.config_file, 'r') as json_config_fd:
-            json_config = json.load(json_config_fd)
-    except Exception as e:
-        base_logger.syslogger.info("Failed to load config file. Aborting...")
-        sys.exit(1)
-
-    if "ec2_private_endpoint_url" in json_config["config"]:
-        endpoint_url = json_config["config"]["ec2_private_endpoint_url"]
-    else:
-        endpoint_url = "ec2.us-west-2.amazonaws.com"
-
-    aws_client = AWSClient(syslogger=base_logger.syslogger,
-                           endpoint_url=endpoint_url)
-
-    if not aws_client.exit:
-        if aws_client.resource is not None:
-            base_logger.syslogger.info("EC2 resource client created")
-        else:
-            base_logger.syslogger.info("Failed to create AWS client resource. Aborting...")
-            sys.exit(1)
-    else:
-        base_logger.syslogger.info("Failed to create AWS client resource. Aborting...")
-        sys.exit(1)
-
-
-    if "syslog_file" in json_config["config"]:
-        syslog_file = json_config["config"]["syslog_file"]
-    else:
-        syslog_file = None 
-
-    if ("syslog_server" in json_config["config"]) and ("syslog_port" in json_config["config"]):
-        syslog_server = json_config["config"]["syslog_server"]
-        syslog_port = json_config["config"]["syslog_port"]
-    else:
-        syslog_server = None
-        syslog_port = None
-
- 
-    if "grpc_server" in json_config["config"]:
-        grpc_server = json_config["config"]["grpc_server"]
-    else:
-        base_logger.syslogger.info("gRPC server not specified in input config file, defaulting to 127.0.0.1")
-        grpc_server ="127.0.0.1"
-
-    if "grpc_port" in json_config["config"]:
-        grpc_port = json_config["config"]["grpc_port"]
-    else:
-        base_logger.syslogger.info("gRPC port not specified in input config file, defaulting to 57777")
-        grpc_server =57777
     
     # Set up the SLBFD object
 
-    sl_bfd_ha =  SLHaBfd(syslogger=base_logger.syslogger,
-                         syslog_file=syslog_file,
-                         syslog_server=syslog_server,
-                         syslog_port=syslog_port,
-                         grpc_server_ip=grpc_server,
-                         grpc_server_port=grpc_port,
-                         config_json=json_config,
-                         aws_resource=aws_client.resource,
-                         aws_instance_id=json_config["config"]["instance_id"])
-                         #aws_instance_id=aws_client.instance_id)
+    sl_bfd_ha =  SLHaBfd(config_file=argobj.config_file)
 
+    if sl_bfd_ha.exit:
+        logging.error("Failed to initialize the HA app object, aborting")
+        sys.exit(1)
 
     # Register our handler for keyboard interrupt and termination signals
-    signal.signal(signal.SIGINT, partial(handler, sl_bfd_ha, aws_client))
-    signal.signal(signal.SIGTERM, partial(handler, sl_bfd_ha, aws_client))
+    signal.signal(signal.SIGINT, partial(handler, sl_bfd_ha))
+    signal.signal(signal.SIGTERM, partial(handler, sl_bfd_ha))
 
     # The process main thread does nothing but wait for signals
     signal.pause() 
