@@ -1,5 +1,7 @@
 {
     "config": {
+    	"global_retry_interval": 30,
+    	"global_retry_count": 5,
     	"ec2_private_endpoint_url": "https://vpce-0786bfdf8aad8840c-vacmlroq-us-west-2a.ec2.us-west-2.vpce.amazonaws.com",
     	"grpc_server": "127.0.0.1",
     	"grpc_port": 57777,

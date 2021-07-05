@@ -5,6 +5,7 @@
 # Author: akshshar@cisco.com
 #
 
+import redis
 import argparse
 import ipaddress
 import os, sys
@@ -361,16 +362,60 @@ class SLHaBfd(BaseLogger):
         else:
             self.syslogger.info("gRPC port not specified in input config file, defaulting to 57777")
             grpc_server_port = 57777
-    
 
-        
+        if "global_retry_count" in self.config_json["config"]:
+            self.global_retry_count  = self.config_json["config"]["global_retry_count"]
+        else:
+            self.syslogger.info("global_retry_count not specified in input config file, defaulting to 5")
+            self.global_retry_count  = 5
+
+        if "global_retry_interval" in self.config_json["config"]:
+            self.global_retry_interval  = self.config_json["config"]["global_retry_interval"]
+        else:
+            self.syslogger.info("global_retry_interval not specified in input config file, defaulting to 30")
+            self.global_retry_interval  = 30
+
+
+        if "redis_server" in self.config_json["config"]:
+            redis_server = self.config_json["config"]["redis_server"]
+        else:
+            self.syslogger.info("Redis server IP not specified in input config file, defaulting to 127.0.0.1")
+            redis_server ="127.0.0.1"
+
+        if "redis_port" in self.config_json["config"]:
+            redis_port = self.config_json["config"]["redis_port"]
+        else:
+            self.syslogger.info("redis port not specified in input config file, defaulting to 6379")
+            redis_port = 6379
+
+
         self.threadList = []
         self.syslogger.info("Using GRPC Server IP(%s) Port(%s)" %(grpc_server_ip, grpc_server_port))
        
         # Create the channel for gRPC.
         self.channel = grpc.insecure_channel(str(grpc_server_ip)+":"+
                                                    str(grpc_server_port))
+        
+
+        self.global_event = Event()
         self.poison_pill= Event()
+
+        self.redis = redis.StrictRedis(host=str(redis_server), port=int(redis_port))
+        self.redis.flushall()
+        self.update_redis("config", json.dumps(self.config_json))
+
+        # Spawn a thread to Initialize the client and listen on notifications
+        # The thread will run in the background
+        self.global_init(self.channel)
+        
+        if self.exit:
+            self.syslogger.info("Failed to start global gRPC thread, exiting...")
+            return
+
+        self.threadList.append(self.global_thread)
+
+
+        self.bfd_neighbors = {}
         self.failover_event = Event()
         self.failover_complete = Event()
         self.stop_check_ha_state =  Event()
@@ -378,13 +423,10 @@ class SLHaBfd(BaseLogger):
         self.secondary_ip_hash = {}
         self.interface_state_hash = {}
         self.ha_state="UNKNOWN"
+        self.ha_interfaces= {}
         self.check_secondary_ip()
         self.action_pool()
 
-        # Spawn a thread to Initialize the client and listen on notifications
-        # The thread will run in the background
-        self.global_init(self.channel)
-        self.threadList.append(self.global_thread)
 
         # Create the SL-BFD gRPC stub and register
         self.stub = sl_bfd_ipv4_pb2_grpc.SLBfdv4OperStub(self.channel)
@@ -418,6 +460,18 @@ class SLHaBfd(BaseLogger):
 
 
 
+    def update_redis(self, key=None, value=None):
+        try:
+            if not self.poison_pill.is_set():
+                self.redis.sadd("redundancy", str(key))
+                combined_value = {'value': value,
+                                  'timestamp': datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S.%f')}
+                self.redis.hset(key, mapping=combined_value)
+                for key in self.redis.scan_iter():
+                    print(key)
+        except Exception as e:
+            self.syslogger.info("Failed to update Redis database.Error: "+str(e))
+
 
     def check_ha_state(self):
         while not self.stop_check_ha_state.is_set():
@@ -441,6 +495,7 @@ class SLHaBfd(BaseLogger):
                 return  {"status": "error", "output": "No method_params specified"} 
             else:
                 try:
+                    interface_map = {}
                     for interface in action["method_params"]["intf_list"]:
                         secondary_ip = interface["secondary_ip"]
                         interface_num = interface["instance_intf_number"]
@@ -449,6 +504,8 @@ class SLHaBfd(BaseLogger):
                         self.syslogger.debug(instance.network_interfaces)
                         intf_private_ips = instance.network_interfaces[int(interface_num)].private_ip_addresses
                         intf_eni_id = instance.network_interfaces[int(interface_num)].id
+                        interface_map[intf_eni_id] = {"interface_num": interface_num, 
+                                                      "private_ip_addresses": intf_private_ips}
                         self.syslogger.debug(intf_private_ips)
                         match=False
                         for intf_private_ip in intf_private_ips:
@@ -462,6 +519,8 @@ class SLHaBfd(BaseLogger):
                         if not match:            
                             self.syslogger.debug(" NO Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
                             self.secondary_ip_hash[str(interface_num)] = False
+
+                    self.update_redis("ha_interfaces", json.dumps(interface_map))
 
                 except Exception as e:
                     self.syslogger.info("Failed to check the current secondary IP status on instance. Error: "+str(e))
@@ -492,6 +551,8 @@ class SLHaBfd(BaseLogger):
                 else:
                     self.syslogger.debug("Not all interfaces converged properly, setting ha_state to UNKNOWN")
                     self.ha_state = "UNKNOWN"
+
+                self.update_redis("ha_state", str(self.ha_state))
         except Exception as e:
             self.syslogger.info("Failed to converge HA state. Set to UNKNOWN. Error: "+str(e))
             self.ha_state = "UNKNOWN"
@@ -500,7 +561,6 @@ class SLHaBfd(BaseLogger):
 
 
     def action_pool(self):
-
         action = self.config_json["config"]["action"]
         if action["method"] == "secondary_ip_shift":
             if not "method_params" in action:
@@ -520,14 +580,11 @@ class SLHaBfd(BaseLogger):
                         thread.start()                                  # Start the execution
 
                         thread_index +=1
-                        # self.syslogger.info("Current IP addresses on interface:")
-                        # self.syslogger.info(self.instance.network_interfaces[interface_num].private_ip_addresses)
                 except Exception as e:
                     self.syslogger.info("Failed to set up action thread pool for secondary_ip shift. Error: "+str(e))
 
 
     def action_thread_secondary_ip_shift(self, secondary_ip=None, interface_num=None, thread_index=None):
-        
         while True:
             if self.poison_pill.is_set():
                 self.syslogger.info("Poison Pill received, terminating action thread")
@@ -708,21 +765,6 @@ class SLHaBfd(BaseLogger):
 
         response = self.stub.SLBfdv4SessionOp(bfdv4Msg, Timeout)
 
-        #self.syslogger.info(response)
-
-        # bfdGetMsg = sl_bfd_common_pb2.SLBfdGetMsg()
-
-        # response = self.stub.SLBfdv4Get(bfdGetMsg, Timeout)
-        # self.syslogger.info(response)
-
-
-        # response = self.stub.SLBfdv4GetStats(bfdGetMsg, Timeout)
-        # self.syslogger.info(response)
-
-        # For each neighbor set up the zeroMQ client/server connection
-
-
-
 
     def intf_notifications(self):
 
@@ -738,21 +780,21 @@ class SLHaBfd(BaseLogger):
                 for response in self.intf_response_stream:
                     self.syslogger.info(response)
                     response_dict = json_format.MessageToDict(response)
+                    self.update_redis("last_intf_event", json.dumps(response_dict))
                     intf_name = response_dict["Info"]["SLIfInfo"]["Name"]
                     state = response_dict["Info"]["IfState"]
                     self.interface_state_hash[intf_name] = state
                     self.syslogger.info(self.interface_state_hash)
 
         except Exception as e:
-            print("Exception occured while listening to Interface notifications")
-            print(e)
+            self.syslogger.info("Exception occured while listening to Interface notifications")
+            self.syslogger.info(e)
 
 
     def bfd_notifications(self):
         bfd_get_notif_msg = sl_bfd_common_pb2.SLBfdGetNotifMsg()
         #Timeout = 3600*24*365
 
-        #instance_id=INSTANCE_ID
         try:
             while True:
                 if self.poison_pill.is_set():
@@ -771,22 +813,6 @@ class SLHaBfd(BaseLogger):
 
                     if response_dict['Session']['State']['Status'] == 'SL_BFD_SESSION_DOWN':
                         if self.ha_state == "STANDBY":
-                            # try:
-                            #     # Check if the local interface associated with the BFD session is up before failing over
-                            #     self.syslogger.info(response_dict['Session']['Key']['Interface']['Name'])
-                            #     interfaceGetMsg = sl_interface_pb2.SLInterfaceGetMsg()
-                            #     interfaceGetMsg.Key.Name = response_dict['Session']['Key']['Interface']['Name']
-                            #     Timeout = 0.05
-                            #     response = self.intfstub.SLInterfaceGet(interfaceGetMsg, Timeout)
-                            #     self.syslogger.info(response)
-                            #     self.syslogger.info(response.Entries)
-                            #     self.syslogger.info(response.Entries[0])
-                            #     self.syslogger.info(response.Entries[0].IfState)
-
-                            # except Exception as e:
-                            #     self.syslogger.info("Exception occured while checking interface state")
-                            #     self.syslogger.info(e)
-
                             self.syslogger.info(self.interface_state_hash[response_dict['Session']['Key']['Interface']['Name']])
                             intf_name = response_dict['Session']['Key']['Interface']['Name']
                             if self.interface_state_hash[intf_name] == "SL_IF_STATE_DOWN":
@@ -800,42 +826,21 @@ class SLHaBfd(BaseLogger):
                                 self.syslogger.info(self.action_hash)
                                 self.failover_event.clear()
                                 self.failover_complete.set()
-                            # self.syslogger.info("Reconverging HA state...")
-                            # # Reconverge ha_state
-                            # self.check_secondary_ip()
-                            # self.converge_ha_state()
 
                         elif self.ha_state == "ACTIVE":
                             self.syslogger.info("Current HA state is Active. Ignoring BFD session DOWN notifications")
-                            # Reconverge ha_state
-                            # self.syslogger.info("Reconverging HA state...")
-                            # self.check_secondary_ip()
-                            # self.converge_ha_state()
                         else:
                             self.syslogger.info("Current HA state is UNKNOWN - ignore current BFD notifications and reconverge HA state")
 
-
+                        self.update_redis("last_bfd_down_event", json.dumps(response_dict))
                         self.syslogger.info("Reconverging HA state...")
                         self.check_secondary_ip()
-                        self.converge_ha_state()       
-                        
-                       # instance = resource.Instance(instance_id)
-                       # instance.network_interfaces[2].assign_private_ip_addresses(AllowReassignment=True, PrivateIpAddresses=['172.31.105.10'])
-                       # self.syslogger.info("Assigned Secondary IP address to local instance interface")
-                       # aws_call_event = True 
-                       # aws_call_time = datetime.datetime.now()
-                       # aws_call_time_elapsed_intf = aws_call_time - interface_time
-                       # aws_call_time_elapsed_bfd = aws_call_time - bfd_time
-                       # print("AWS call finished post Interface event of peer")
-                       # print(aws_call_time.strftime('%Y/%m/%d %H:%M:%S.%f')[:-3])
-                       # print("Time Elapsed post intf event in milliseconds")
-                       # print(int(aws_call_time_elapsed_intf.total_seconds() * 1000))
-                       # print("Time Elapsed post bfd event in milliseconds")
-                       # print(int(aws_call_time_elapsed_bfd.total_seconds() * 1000))
-                       # aws_call_event= False
-                       # bfd_event = False
-                       # interface_event = False
-
+                        self.converge_ha_state()     
+                    elif response_dict['Session']['State']['Status'] == 'SL_BFD_SESSION_UP':
+                        neigh_ip = ipaddress.ip_address(response_dict['Session']['Key']['NbrAddr']).__str__()
+                        self.bfd_neighbors[neigh_ip] = response_dict
+                        self.update_redis("bfd_neighbors", json.dumps(self.bfd_neighbors))
+ 
 
         except Exception as e:
             self.syslogger.info("Exception occured while listening to BFD notifications")
@@ -843,7 +848,7 @@ class SLHaBfd(BaseLogger):
 
 
 
-    def client_init(self, stub, event):
+    def client_init(self, stub):
         #
         # Create SLInitMsg to handshake the version number with the server.
         # The Server will allow/deny access based on the version number.
@@ -883,61 +888,80 @@ class SLHaBfd(BaseLogger):
                                 response.InitRspMsg.MinorVer,
                                 response.InitRspMsg.SubVer))
                             self.syslogger.info("Successfully Initialized, connection established!")
-                            # Any thread waiting on this event can proceed
-                            event.set()
+                            # Any thread waiting on the global event can proceed
+                            self.global_event.set()
                         else:
                             self.syslogger.info("client init error code 0x%x", response.ErrStatus.Status)
                             return
                     elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_HEARTBEAT:
                         self.syslogger.info("Received HeartBeat")
-                        #if self.poison_pill.is_set():
-                        #    self.syslogger.info("Poison Pill received, terminating global init thread")
-                        #    return
                     elif response.EventType == sl_global_pb2.SL_GLOBAL_EVENT_TYPE_ERROR:
                         if (sl_common_types_pb2.SLErrorStatus.SL_NOTIF_TERM ==
                                 response.ErrStatus.Status):
                             self.syslogger.info("Received notice to terminate. Client Takeover?")
+                            self.syslogger.info("Setting poison pill")
                             return
                         else:
                             self.syslogger.info("Error not handled:", response)
                     else:
                         self.syslogger.info("client init unrecognized response %d", response.EventType)
+                        self.syslogger.info("Setting poison pill")
                         return
 
         except Exception as e:
             self.syslogger.info("Exception occured while listening to Global HeartBeat notifications")
             self.syslogger.info(e)
-
-    def global_thread(self, stub, event):
-        self.syslogger.info("Global thread spawned")
-
-        # Initialize the GRPC session. This function should never return
-        self.client_init(stub, event)
-
-        self.syslogger.info("global_thread: exiting unexpectedly")
-        # If this session is lost, then most likely the server restarted
-        # Typically this is handled by reconnecting to the server. For now, exit()
-        return
+            return
 
     #
-    # Spawn a thread for global events
+    # Spawn a thread for global gRPC events
     #
     def global_init(self,channel):
         # Create the gRPC stub.
         stub = sl_global_pb2_grpc.SLGlobalStub(channel)
 
-        # Create a thread sync event. This will be used to order thread execution
-        event = threading.Event()
 
-        # The main reason we spawn a thread here, is that we dedicate a GRPC
-        # channel to listen on Global asynchronous events/notifications.
-        # This thread will be handling these event notifications.
-        self.global_thread = threading.Thread(target = self.global_thread, args=(stub, event))
-        self.global_thread.daemon = True
-        self.global_thread.start()
+        iteration = 0
+        attempt_thread = True
+        while True:
 
-        # Wait for the spawned thread before proceeding
-        event.wait()
+            if attempt_thread:
+                # The main reason we spawn a thread here, is that we dedicate a GRPC
+                # channel to listen on Global asynchronous events/notifications.
+                # This thread will be handling these event notifications.
+                self.global_thread = threading.Thread(target = self.client_init, args=(stub,))
+                self.global_thread.daemon = True
+                self.global_thread.start()
+
+            # Wait for the global_event to be set and retry as needed:
+            while not self.global_event.is_set():
+                self.syslogger.info("Global Event not set yet, wait for retry interval = "+str(self.global_retry_interval)+" seconds.")
+                global_event_flag = self.global_event.wait(self.global_retry_interval)
+                if not global_event_flag:
+                    self.global_thread.join(timeout=5)
+                    if not self.global_thread.is_alive():
+                        attempt_thread = True
+                    else:
+                        attempt_thread = False
+                    # Timeout occured, increment iterator and try again
+                    iteration +=1
+                    break
+
+            if self.global_event.is_set():
+                self.syslogger.info("Global Event Set!")
+                self.exit = False
+                return
+
+            if iteration < self.global_retry_count:
+                self.syslogger.info("Failed to connect to the gRPC server, trying again....")
+            else:
+                self.syslogger.info("Unable to connect to gRPC server, retries exceeded. Bailing out...")
+                self.exit = True
+                return
+
+
+        # # Wait for the spawned thread before proceeding
+        # self.global_event.wait()
 
         # Get the globals. Create a SLGlobalsGetMsg
         global_get = sl_global_pb2.SLGlobalsGetMsg()
@@ -964,6 +988,8 @@ class SLHaBfd(BaseLogger):
             self.syslogger.info("Max Remote Bckup Addr: %d" %(response.MaxRemoteAddressNum))
         else:
             self.syslogger.info("Globals response Error 0x%x" %(response.ErrStatus.Status))
+            self.poison_pill.set()
+            self.exit = True
             return
 
 
@@ -975,7 +1001,6 @@ class SLHaBfd(BaseLogger):
 # Setup the GRPC channel with the server, and issue RPCs
 #
 if __name__ == '__main__':
-    #pdb.set_trace()
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config-file', dest='config_file', default="/root/config.json",
                     help='Specify path to the json config file for HA App')
@@ -987,13 +1012,13 @@ if __name__ == '__main__':
         sys.exit(1)
 
     
+    
     # Set up the SLBFD object
-
     sl_bfd_ha =  SLHaBfd(config_file=argobj.config_file)
-
     if sl_bfd_ha.exit:
         logging.error("Failed to initialize the HA app object, aborting")
         sys.exit(1)
+          
 
     # Register our handler for keyboard interrupt and termination signals
     signal.signal(signal.SIGINT, partial(handler, sl_bfd_ha))

@@ -1,3 +1,11 @@
+--->  Before doing an SCP, enable SCP at higher rates into the routers using the following policing policy for lpts
+
+!
+lpts pifib hardware police
+ flow ssh known rate 15000
+ flow ssh default rate 15000
+ !
+
 
 ### SCP App RPM and router specific config.json to harddisk: (/misc/disk1)
 
@@ -10,17 +18,45 @@ scp config_rtr1.json root@<xrv9k-ip>:/misc/disk1/
 
 # Install RPM
 appmgr package install rpm /misc/disk1/xrv9k-slbfdha-aws-0.1.0-eXR.x86_64.rpm
+
 # copy config file to config mount of App
 copy harddisk:config_rtr1.json apphost:/appmgr/config/xrv9k_slbfdha_aws/config.json
 
 
 
-### XR CLI config 
-# Activate App
 
+### XR CLI config 
+# Activate App along with grpc server and routes to metadata and endpoint services
+
+
+!
+bfd
+  echo disable
+  !
 !
 appmgr
  application xrv9k_slbfdha_aws
   activate type docker source xrv9k_slbfdha_aws docker-run-opts "-v {app_install_root}/config/xrv9k_slbfdha_aws:/root/config -it --restart on-failure:6 --cap-add=SYS_ADMIN --log-opt max-size=21m --log-opt max-file=9 -e HOSTNAME=$HOSTNAME --net=host"
  !
 !
+router static
+ address-family ipv4 unicast
+  169.254.169.254/32 172.31.100.1
+ !
+domain name-server 172.31.0.2
+!
+tpa
+ vrf default
+  address-family ipv4
+   update-source dataports TenGigE0/0/0/0
+  !
+ !
+ grpc
+ port 57777
+ no-tls
+ service-layer
+ !
+!
+
+
+# The above static route and domain name are used to enable applications in XR to access AWS metadata via the 1st data port

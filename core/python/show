@@ -1,0 +1,25 @@
+#!/bin/bash
+key=$1
+
+if [[ $key == "redundancy" ]]; then
+    jq_filter=".[0] .${key}"
+    timestamp_filter=""
+else
+    jq_filter=".[0] .${key} .value"
+    timestamp_filter=".[0] .$key .timestamp"
+fi
+
+filtered_out=`rdb -c json --key $key /var/lib/redis/dump.rdb | jq -r ''"$jq_filter"''`
+
+if [[ $timestamp_filter != "" ]];then
+   echo -ne "\nLast Created: "
+   rdb -c json --key $key /var/lib/redis/dump.rdb | jq -r ''"$timestamp_filter"'' 
+   echo ""
+fi
+
+if jq -e . >/dev/null 2>&1 <<<"$filtered_out"; then
+     
+    echo $filtered_out | jq
+else
+    echo $filtered_out
+fi

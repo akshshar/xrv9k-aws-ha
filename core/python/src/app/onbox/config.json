@@ -1,10 +1,12 @@
 {
     "config": {
+    	"global_retry_interval": 30,
+    	"global_retry_count": 5,
+    	"redis_server": "127.0.0.1",
+    	"redis_port": "6379",
     	"ec2_private_endpoint_url": "https://vpce-0786bfdf8aad8840c-vacmlroq-us-west-2a.ec2.us-west-2.vpce.amazonaws.com",
     	"grpc_server": "127.0.0.1",
     	"grpc_port": 57777,
-    	"router_id": "172.31.105.206",
-    	"hello_port": 5555,
         "action": {
             "method": "secondary_ip_shift",
             "method_params": {
