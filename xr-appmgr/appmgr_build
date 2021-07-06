@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+
+from os import supports_bytes_environ
+from os.path import abspath
+import sys
+import yaml
+import argparse
+import os
+import shutil
+import configparser
+import itertools
+from pathlib import Path
+import subprocess
+import time
+import shlex
+
+
+# INTERNAL DIRECTORIES
+# Move these to a seperate file
+dirname = os.path.dirname(os.path.abspath(__file__))
+RELEASE_CONF_DIR = os.path.join(dirname, "release_configs")
+SPEC_DIR = os.path.join(dirname, "build/specs")
+RPM_DIR = os.path.join(dirname, "RPMS")
+ARCHIVE_DIR = os.path.join(dirname, "build/archives")
+KEY_DIR = os.path.join(dirname, "build/archives/keys")
+RPM_SOURCE_DIR = os.path.join(dirname, "build/archives/sources")
+
+
+def archive_dir(package, *args):
+    return os.path.join(ARCHIVE_DIR, package, *args)
+
+
+def pkg_source_dir(package, *args):
+    return archive_dir(package, "sources", *args)
+
+
+def pkg_config_dir(package, *args):
+    return archive_dir(package, "configs", *args)
+
+
+def pkg_data_dir(package, *args):
+    return archive_dir(package, "data", *args)
+
+def key_dir(*args):
+    return archive_dir("keys", *args)
+
+parser = argparse.ArgumentParser()
+
+group = parser.add_mutually_exclusive_group(required=True)
+
+group.add_argument(
+    "-b", "--build-config", dest="config", help="build configuration"
+)
+group.add_argument(
+    "-c", "--clean", action="store_true", help="clean up build directories"
+)
+
+args = parser.parse_args()
+
+
+def clean():
+    shutil.rmtree(SPEC_DIR, ignore_errors=True)
+    shutil.rmtree(ARCHIVE_DIR, ignore_errors=True)
+    for f in Path(RPM_DIR).glob("**/*.rpm"):
+        shutil.rmtree(f, ignore_errors=True)
+    shutil.rmtree(Path(KEY_DIR), ignore_errors=True)
+
+
+if args.clean:
+    clean()
+    sys.exit(0)
+
+with open(args.config) as f:
+    config = yaml.load(f, Loader=yaml.FullLoader)
+
+release_conf = configparser.ConfigParser()
+
+
+def make_spec(package):
+    package_name = "{name}-{version}-{release}".format(**package)
+    # Seperate out by section
+    headers = []
+    prep = []
+    install = []
+    files = []
+    post = []
+    preun = []
+
+    # Header
+    headers.append("Name: {}".format(package["name"]))
+    headers.append("Version: {}".format(package["version"]))
+    headers.append("Release: {}".format(package["release"]))
+    # TODO: is this ok?
+    headers.append(
+        "License: Copyright (c) 2020 Cisco Systems Inc. All rights reserved"
+    )
+    headers.append("Packager: cisco")
+    headers.append("SOURCE0 : {}.tar.gz".format(package_name))
+    headers.append("Group: 3rd party application")
+    headers.append(
+        "Summary: {name} {version} compiled for IOS-XR {release}".format(
+            **package
+        )
+    )
+    headers.append("")
+    headers.append("Prefix: /")
+    headers.append("")
+    headers.append("%description")
+    headers.append(
+        "This packages the artifacts required to run a 3rd party app"
+    )
+
+    # init prep section
+    prep.append("")
+    prep.append("%prep")
+    prep.append("%setup -q -n {}".format(package_name))
+    prep.append("")
+
+    # init post section
+    post.append("")
+    post.append("%post")
+
+    # init preun section
+    preun.append("")
+    preun.append("%preun")
+
+    # init install section
+    install.append("")
+    install.append("%install")
+    install.append("")
+
+    # init files section
+    files.append("")
+    files.append("%files")
+
+    install.append("# Sources")
+    source_dest = release_conf["paths"]["appmgr_source"]
+    install.append("mkdir -p %{{buildroot}}{}".format(source_dest))
+    for source in package["sources"]:
+        files.append(
+            "%dir {}".format(os.path.join(source_dest, source["name"]))
+        )
+        files.append(
+            os.path.join(
+                source_dest, source["name"], os.path.basename(source["file"])
+            )
+        )
+        install.append(
+            "cp -ar {} %{{buildroot}}{}".format(
+                os.path.join("sources", source["name"]), source_dest
+            )
+        )
+
+    install.append("")
+    install.append("# Config directory")
+    for dir in package.get("config-dir", []):
+        # Directory to copy
+        conf_dir = os.path.join("configs", dir["name"])
+        # Destination directory
+        conf_dest = os.path.join(
+            release_conf["paths"]["appmgr_config"],
+            dir["name"],
+        )
+        install.append("mkdir -p %{{buildroot}}{}".format(conf_dest))
+        files.append("%dir {}".format(conf_dest))
+        install.append(
+            "cp -arT {} %{{buildroot}}{}".format(conf_dir, conf_dest)
+        )
+
+        def normjoin(path, *args):
+            return os.path.normpath(os.path.join(path, *args))
+
+        prefix = pkg_config_dir(package_name, dir["name"])
+        for root, subdirs, subfiles in os.walk(prefix):
+            # Make path relative to pkg_conf_dir
+            root = os.path.relpath(root, start=prefix)
+            for name in subdirs:
+                files.append("%dir {}".format(normjoin(conf_dest, root, name)))
+            for name in subfiles:
+                files.append("{}".format(normjoin(conf_dest, root, name)))
+
+        if package.get("copy_ems_cert"):
+            post.append("cp /misc/config/grpc/ems.pem $RPM_INSTALL_PREFIX{}".format(conf_dest))
+            preun.append("rm {}".format(os.path.join("$RPM_INSTALL_PREFIX" + conf_dest, "ems.pem")))
+
+        if package.get("copy_hostname"):
+            post.append("cp /etc/hostname $RPM_INSTALL_PREFIX{}".format(conf_dest))
+            preun.append("rm {}".format(os.path.join("$RPM_INSTALL_PREFIX" + conf_dest, "hostname")))
+
+    if release_conf["build"].getboolean("script_support"):
+        sections = itertools.chain(headers, prep, install, files, post, preun)
+    else:
+        sections = itertools.chain(headers, prep, install, files)
+
+    # Concatenate and join the sections
+    return "\n".join(sections)
+
+
+clean()
+
+os.makedirs(SPEC_DIR, exist_ok=True)
+os.makedirs(RPM_SOURCE_DIR, exist_ok=True)
+os.makedirs(KEY_DIR, exist_ok=True)
+
+for package in config["packages"]:
+    print("Starting to build package:", package["name"])
+    release_conf.read(
+        os.path.join(RELEASE_CONF_DIR, package["release"] + ".ini")
+    )
+
+    print("Building docker image {}...".format(release_conf["build"]["image"]))
+
+    try:
+        subprocess.run(["make", release_conf["build"]["image"]], cwd=dirname)
+    except subprocess.CalledProcessError:
+        print("Could not build docker image {}".format(release_conf["build"]["image"]))
+        sys.exit(1)
+
+    print("Adding sources...")
+    package_name = "{name}-{version}-{release}".format(**package)
+    for source in package.get("sources"):
+        print(" --->",  source["name"])
+        dest = pkg_source_dir(package_name, source["name"])
+        os.makedirs(dest, exist_ok=False)
+        shutil.copy(source["file"], dest)
+
+    print("Adding configs...")
+    os.makedirs(pkg_config_dir(package_name), exist_ok=False)
+    for dir_info in package.get("config-dir", []):
+        print(" --->",  dir_info["name"])
+        dest = pkg_config_dir(package_name, dir_info["name"])
+        shutil.copytree(dir_info["dir"], dest)
+
+    print("Adding data...")
+    os.makedirs(pkg_data_dir(package_name), exist_ok=False)
+    for dir_info in package.get("data-dir", []):
+        print(" --->",  dir_info["name"])
+        dest = pkg_data_dir(package_name, dir_info["name"])
+        shutil.copytree(dir_info["dir"], dest)
+
+    gpg_key = package.get("gpg_key")
+
+    if gpg_key:
+        print("Adding gpg key:", gpg_key)
+        shutil.copy(gpg_key, key_dir(package_name))
+
+    print("Creating source archive...")
+    subprocess.run(
+        [
+            "tar",
+            "-czf",
+            os.path.join("sources", "{}.tar.gz".format(package_name)),
+            "{}".format(package_name),
+        ],
+        cwd=ARCHIVE_DIR,
+    )
+
+    spec_name = "{name}-{version}-{release}.spec".format(**package)
+    print("Generating spec file:", spec_name)
+    spec = make_spec(package)
+    with open(os.path.join(SPEC_DIR, spec_name), "w") as f:
+        f.write(spec)
+
+    spec_file = os.path.join(release_conf["build"]["rpm_spec_dir"], spec_name)
+    command = [
+            "/usr/sbin/build_rpm.sh",
+            "--spec-file", spec_file,
+            "--source-dir", release_conf["build"]["rpm_source_dir"],
+            "--rpm-dir", release_conf["build"]["rpm_rpm_dir"],
+            "--output-dir", release_conf["build"]["rpm_output_dir"],
+            "--verbose"
+    ]
+
+    if gpg_key:
+        command.extend(["--gpg-key" , "/root/keys/{}".format(package_name)])
+
+    print("Building RPM...")
+    print(" ".join(command))
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-it",
+            "--rm",
+            "--name",
+            "appmgr_rpm_builder",
+            "-v",
+            "{}:{}".format(os.path.abspath(SPEC_DIR), release_conf["build"]["rpm_spec_dir"]),
+            "-v",
+            "{}:{}".format(os.path.abspath(RPM_SOURCE_DIR), release_conf["build"]["rpm_source_dir"]),
+            "-v",
+            "{}:{}".format(
+                os.path.join(os.path.abspath(dirname), "RPMS"), release_conf["build"]["rpm_output_dir"]
+            ),
+            # This one's for logs
+            "-v",
+            "{}:{}".format(
+                os.path.join(os.path.abspath(dirname), "build"), "/tmp"
+            ),
+            "-v",
+            "{}:{}".format(os.path.abspath(KEY_DIR), "/root/keys"),
+            release_conf["build"]["image"],
+        ]
+        + command,
+        cwd=RPM_SOURCE_DIR,
+    )
+    print()
+    print("Done building package", package["name"])
+    print()
+

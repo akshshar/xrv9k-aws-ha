@@ -2,3 +2,104 @@
 Onbox docker App to enable High-Availability for XRv9k on AWS using IOS-XR Service-Layer API and AWS API
 
 
+
+
+
+
+## Deploy App
+
+
+###################################################################################################################
+
+            STEP 1:  COPY Artifacts to router harddisk
+
+###################################################################################################################
+
+--->  Before doing an SCP, enable SCP at higher rates into the routers using the following policing policy for lpts
+
+```
+!
+lpts pifib hardware police
+ flow ssh known rate 15000
+ flow ssh default rate 15000
+ !
+ ```
+
+
+
+### SCP App RPM and router specific config.json + hosts file (for predetermined resolution for ec2 endpoint url) to harddisk: (/misc/disk1)
+
+```
+
+scp xrv9k-slbfdha-aws-0.1.0-eXR.x86_64.rpm root@<xrv9k-ip>:/misc/disk1/
+scp config_rtr1.json root@<xrv9k-ip>:/misc/disk1/
+scp hosts root@<xrv9k-ip>:/misc/disk1/
+
+```
+
+###################################################################################################################
+
+            STEP 2:  Install Application RPM and move config files to App Folder
+
+###################################################################################################################
+
+### XR CLI exec commands:  
+
+```
+# Install RPM
+appmgr package install rpm /misc/disk1/xrv9k-slbfdha-aws-0.1.0-eXR.x86_64.rpm
+
+# copy config file to config mount of App
+copy harddisk:config_rtr1.json apphost:/appmgr/config/xrv9k_slbfdha_aws/config.json
+
+# copy hosts file to config mount of App
+copy harddisk:hosts apphost:/appmgr/config/xrv9k_slbfdha_aws/hosts
+```
+
+
+
+###################################################################################################################
+
+            STEP 3:  Apply CLI configuration to activate app
+
+###################################################################################################################
+
+
+### XR CLI config 
+
+```
+# Activate App along with grpc server and routes to metadata and endpoint services
+
+
+!
+bfd
+  echo disable
+  !
+!
+appmgr
+ application xrv9k_aws_ha
+  activate type docker source xrv9k_aws_ha docker-run-opts "-itd --net=host -v {app_install_root}/config/xrv9k_aws_ha/config.json:/app/onbox/config.json -v {app_install_root}/config/xrv9k_aws_ha/hosts:/etc/hosts"
+ !
+!
+!
+router static
+ address-family ipv4 unicast
+  169.254.169.254/32 172.31.100.1
+ !
+!
+tpa
+ vrf default
+  address-family ipv4
+   update-source dataports TenGigE0/0/0/0
+  !
+ !
+ grpc
+ port 57777
+ no-tls
+ service-layer
+ !
+!
+
+```
+
+ --> The above static route and domain name are used to enable applications in XR to access AWS metadata via the 1st data port

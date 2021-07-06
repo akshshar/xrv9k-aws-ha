@@ -1,0 +1,10 @@
+packages:
+- name: "xrv9k-aws-ha"
+  release: "eXR"
+  version: "0.1.0"
+  sources:
+    - name: xrv9k_aws_ha
+      file: src/apps/xrv9k_aws_ha/xrv9k_aws_ha.tar
+  config-dir:
+    - name: xrv9k_aws_ha
+      dir: src/apps/xrv9k_aws_ha/config
