@@ -1,7 +1,14 @@
 # xrv9k_ha
 Onbox docker App to enable High-Availability for XRv9k on AWS using IOS-XR Service-Layer API and AWS API
 
+## How does it work?
 
+Check out the solution guide: [HA_redundancy_xrv9k_soln.pdf](/HA_redundancy_xrv9k_soln.pdf) for details on how the application works.
+The figures below capture the design details:
+
+![](/images/ha_app_solution_design.png)
+
+![](/images/ha_app_solution_design_secondary_ip.png)
 
 
 ## Build App
