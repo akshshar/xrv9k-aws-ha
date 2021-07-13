@@ -1,4 +1,4 @@
-# xrv9k_ha
+# xrv9k-aws-ha
 Onbox docker App to enable High-Availability for XRv9k on AWS using IOS-XR Service-Layer API and AWS API
 
 ## How does it work?
@@ -102,10 +102,10 @@ d7376ff144fe: Download complete
 ### Build the Application RPM from docker image for deployment
 
 
-Drop into the app specific folder under `/xr-appmgr/` in the root of the cloned git repository
+Drop into the app specific folder under `/xr-appmgr/` in the root of the cloned git repository and create a tarball from the Docker image.
 
 ```
-ks::~/ha_app_xrv9k$
+aks::~/ha_app_xrv9k$
 aks::~/ha_app_xrv9k$
 aks::~/ha_app_xrv9k$cd xr-appmgr/src/apps/xrv9k_aws_ha/
 aks::~/ha_app_xrv9k/xr-appmgr/src/apps/xrv9k_aws_ha$
@@ -269,7 +269,7 @@ A sample hosts file is present under `/core/python/src/app/onbox/` and also show
 
 #####################################################################################
 
---->  Before doing an SCP, enable SCP at higher rates into the routers using the following policing policy for lpts
+--->  Before doing an SCP, enable SCP at higher rates into the routers using the following rate-limit policy for SSH in lpts
 
 ```
 !
@@ -356,7 +356,7 @@ tpa
 
 ```
 
- --> The above static route and domain name are used to enable applications in XR to access AWS metadata via the 1st data port
+ --> The above static route and tpa update-source config are used to enable docker applications on XR to access AWS metadata via the 1st data port.
 
 
 
