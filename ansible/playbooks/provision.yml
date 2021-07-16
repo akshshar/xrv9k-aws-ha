@@ -1,0 +1,41 @@
+- hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    region: us-east-1
+    keypair: cloudformation-key 
+    stack_name: xrv9k-ha-test
+    ansible_ssh_private_key_file: "{{ lookup('file', '~/.ssh/id_rsa') }}" 
+     
+  tasks:
+    - name: try creating a key pair with name of an already existing keypair
+      ec2_key:
+        name: cloudformation-key 
+        key_material: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+        force: true
+
+
+    - name: Create xrv9k HA stack
+      cloudformation:
+        stack_name: "{{ stack_name }}"
+        region: "{{ region }}"
+        disable_rollback: true
+        state: present
+        template: ".yml"
+        template_parameters:
+          KeyName: "{{ keypair }}"
+          InstanceType: "{{ instance_type }}"
+          SSHLocation: "{{ ssh_location }}"
+        tags:
+          stack: "{{ stack_name }}"
+
+    - name: Get ec2 instances info
+      ec2_instance_info:
+        region: "{{ region }}"
+        filters:
+        #  "tag:Name": "r33"
+          instance-state-name: [ "running" ]
+      register: ec2_list
+
+
+    - debug: var=ec2_list
