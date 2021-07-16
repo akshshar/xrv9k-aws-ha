@@ -5,37 +5,257 @@
     region: us-east-1
     keypair: cloudformation-key 
     stack_name: xrv9k-ha-test
-    ansible_ssh_private_key_file: "{{ lookup('file', '~/.ssh/id_rsa') }}" 
      
   tasks:
     - name: try creating a key pair with name of an already existing keypair
-      ec2_key:
+      amazon.aws.ec2_key:
         name: cloudformation-key 
-        key_material: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+        key_material: "{{ lookup('file', '/root/ssh/id_rsa.pub') }}"
         force: true
 
 
+    #- name: Delete any previously existing xrv9k HA stack
+    #  cloudformation:
+    #    stack_name: "{{ stack_name }}"
+    #    region: "{{ region }}"
+    #    state: absent 
+    #    template: "{{ playbook_dir }}/cloudformation/xrv9k_aws_ha_topo_basic.yml"
+    #    tags:
+    #      stack: "{{ stack_name }}"
+
+
     - name: Create xrv9k HA stack
-      cloudformation:
+      amazon.aws.cloudformation:
         stack_name: "{{ stack_name }}"
         region: "{{ region }}"
-        disable_rollback: true
         state: present
-        template: ".yml"
-        template_parameters:
-          KeyName: "{{ keypair }}"
-          InstanceType: "{{ instance_type }}"
-          SSHLocation: "{{ ssh_location }}"
+        template: "{{ playbook_dir }}/cloudformation/xrv9k_aws_ha_topo_basic.yml"
+        on_create_failure: DELETE
+        #template_parameters:
+        #  KeyName: "{{ keypair }}"
+        #  InstanceType: "{{ instance_type }}"
+        #  SSHLocation: "{{ ssh_location }}"
         tags:
           stack: "{{ stack_name }}"
 
-    - name: Get ec2 instances info
-      ec2_instance_info:
+    - name: Fetch bastion info
+      community.aws.ec2_instance_info:
         region: "{{ region }}"
         filters:
-        #  "tag:Name": "r33"
+          "tag:stack": "{{ stack_name }}"
+          "tag:Name": "Bastion"
           instance-state-name: [ "running" ]
-      register: ec2_list
+      register: ec2_bastion
 
 
-    - debug: var=ec2_list
+    - name: Fetch stack resources
+      amazon.aws.cloudformation_info:
+        stack_name: "{{ stack_name }}"
+        stack_resources: true
+      register: cfstack_resources
+
+    - debug:
+        msg: "{{ cfstack_resources['cloudformation'][stack_name|string]['stack_resources']['Ec2AccessIntfEndpoint'] }}"
+
+    - set_fact:
+        cf_ec2_vpc_endpoint_id: "{{ cfstack_resources['cloudformation'][stack_name|string]['stack_resources']['Ec2AccessIntfEndpoint'] }}"
+
+    - name: Fetch specific vpc endpoint
+      community.aws.ec2_vpc_endpoint_info:
+        query: endpoints
+        region: "{{ region }}"
+        vpc_endpoint_ids:
+          - "{{ cf_ec2_vpc_endpoint_id }}"
+      register: vpc_endpoint
+
+    - debug: var=vpc_endpoint
+
+    - set_fact:
+        vpc_endpoint_eni: "{{ vpc_endpoint['vpc_endpoints'][0]['network_interface_ids'][0] }}"
+
+    - debug: var=vpc_endpoint_eni
+
+
+    - amazon.aws.ec2_eni_info:
+        filters:
+         network-interface-id: "{{ vpc_endpoint_eni }}"
+      register: vpc_endpoint_eni_info
+    
+    - debug: var=vpc_endpoint_eni_info
+
+    - set_fact:
+        vpc_endpoint_eni_ip: "{{ vpc_endpoint_eni_info['network_interfaces'][0]['private_ip_address'] }}"
+
+    - debug: var=vpc_endpoint_eni_ip
+
+    - set_fact:
+        vpc_endpoint_private_dns: "ec2.{{ region }}.amazonaws.com"
+
+    - name: Create /etc/hosts file to be used for quick vpc-endpoint domain resolution by the app
+      lineinfile:
+          dest: "{{ playbook_dir }}/hosts"
+          line: "{{ vpc_endpoint_eni_ip }} {{ vpc_endpoint_private_dns }}"
+          state: present
+          create: yes
+
+    - name: Add bastion instance to inventory
+      add_host:
+        name: "{{ item.public_dns_name }}"
+        ansible_user: ec2-user
+        host_key_checking: false
+        groups: "aws_bastion"
+      #no_log: true
+      when: ec2_bastion.instances|length > 0
+      loop: "{{ ec2_bastion['instances'] | flatten(levels=1) }}"
+
+    - name: Add xrv9k rtr1 instance to inventory
+      add_host:
+        name: "{{ item.public_dns_name }}"
+        ansible_user: root
+        ansible_hostname: rtr1
+        host_key_checking: false
+        groups: "aws_xrv9k_rtr1"
+      #no_log: true
+      when: ec2_bastion.instances|length > 0
+      loop: "{{ ec2_bastion['instances'] | flatten(levels=1) }}"
+
+    - name: Add xrv9k rtr1 instance to inventory
+      add_host:
+        name: "{{ item.public_dns_name }}"
+        ansible_user: root
+        ansible_hostname: rtr2
+        host_key_checking: false
+        groups: "aws_xrv9k_rtr2"
+      #no_log: true
+      when: ec2_bastion.instances|length > 0
+      loop: "{{ ec2_bastion['instances'] | flatten(levels=1) }}"
+
+    - debug: var=groups
+    - debug: var=hosts
+
+- hosts: aws_bastion
+  gather_facts: false
+  vars:
+    #ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+    ansible_user: ec2-user
+    host_key_checking: false
+    ansible_port: 22
+ 
+  tasks:
+    - name: wait for instances to become available
+      wait_for_connection:
+
+    - name: Copy cloudformation key pair to bastion host
+      copy:
+        src: /root/ssh/id_rsa
+        dest: /home/ec2-user/id_rsa
+        mode: 0600
+
+    - name: Kill any previously launched port forwarding sessions
+      shell: pkill -f "ssh -o StrictHostKeyChecking=no -i /home/ec2-user/id_rsa -fNL"
+      ignore_errors: true
+      
+    - name: Setup ssh local port forwarding to access xr routers
+      command:  ssh -o StrictHostKeyChecking=no -i /home/ec2-user/id_rsa -fNL 0.0.0.0:{{ item }}:22 ec2-user@localhost
+      loop:
+        - 2201:10.0.0.10
+        - 2202:10.0.0.20
+        - 2203:10.0.0.30
+
+    - name: Update all packages
+      yum:
+        name: '*'
+        state: latest
+        update_only: yes
+      become: yes
+
+    - name: Ensure a list of yum packages are installed
+      yum:
+        name: "{{ packages }}"
+        state: latest
+        update_cache: yes
+      vars:
+        packages:
+        - python-pip
+        - yum-utils
+        - device-mapper-persistent-data
+        - lvm2
+        - amazon-linux-extras
+        - git
+      become: yes
+    
+    - name: Add extras repository
+      shell: yum-config-manager --enable extras
+      become: yes
+
+    - name: Install docker-ce via amazon-linux-extras packages
+      shell: "amazon-linux-extras install docker -y"
+      become: yes
+
+    - name: Enable Docker CE service at startup
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: adding existing user ec2-user to group docker
+      user:
+        name: 'ec2-user'
+        groups: docker
+        append: yes
+      become: yes
+
+    - name: Reset SSH connection so the Docker user can run Docker commands
+      meta: "reset_connection"
+
+    - name: Clone xrv9k HA app repository to bastion host
+      git:
+          repo: https://github.com/akshshar/xrv9k-aws-ha
+          dest: /home/ec2-user/xrv9k-aws-ha
+
+    - name: Copy generated hosts file to app build config folder
+      copy:
+          src: "{{ playbook_dir }}/hosts"
+          dest: /home/ec2-user/xrv9k-aws-ha/xr-appmgr/src/apps/xrv9k_aws_ha/config/
+   
+    - name: Build the xrv9k HA app docker image
+      shell: cd /home/ec2-user/xrv9k-aws-ha/core/python/ && docker build -t akshshar/xrv9k_aws_ha .
+      
+    - name: Create HA app docker tarball
+      shell: docker save akshshar/xrv9k_aws_ha:latest > /home/ec2-user/xrv9k-aws-ha/xr-appmgr/src/apps/xrv9k_aws_ha/xrv9k_aws_ha.tar
+
+    - name: Install AppMgr requirements
+      pip:
+        requirements: /home/ec2-user/xrv9k-aws-ha/xr-appmgr/requirements.txt 
+      become: yes
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Build the xrv9k HA App RPM
+      shell: cd /home/ec2-user/xrv9k-aws-ha/xr-appmgr/ && ./appmgr_build -b build.yaml 
+      
+
+    - name: Fetch the built RPM to local playbook directory
+      fetch:
+        src: /home/ec2-user/xrv9k-aws-ha/xr-appmgr/RPMS/x86_64/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
+        dest: "{{ playbook_dir }}/
+
+- hosts: aws_xrv9k_rtr1
+  gather_facts: false
+  connection: network_cli
+  vars:
+    ansible_user: root
+    ansible_port: 2201
+    ansible_network_os: cisco.iosxr.iosxr
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  tasks:
+    - name: wait for instances to become available
+      wait_for_connection:
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - show version
+          - show interfaces
+          - run ls

@@ -42,6 +42,7 @@ Metadata:
         - f26e817e-a232-47e8-845e-0415e4473ecb
         - c0682a11-bf82-4ab4-b409-a3acb7cb0902
         - 88fa615f-7921-42b1-afe5-aac03574b4c5
+        - ee1a6b14-bc32-4955-9249-8eb46efeb557
       dependson:
         - 4b19d30e-231d-4b10-8d31-2776bbec2ef4
     06904afe-9f6f-4ad1-99f8-dc8de96b3c75:
@@ -69,9 +70,9 @@ Metadata:
       isassociatedwith:
         - 83a21636-ede0-4366-95e8-15a29039b97d
         - e4f0fb86-9a19-4d07-9a40-d501aaa46592
+        - 9aa75fd2-b8e1-4ca3-8e88-9d6a3e7797b7
       dependson:
         - 99d3cc77-08fa-4b9a-bcf7-93c24dacac04
-        - 9aa75fd2-b8e1-4ca3-8e88-9d6a3e7797b7
     f26e817e-a232-47e8-845e-0415e4473ecb:
       size:
         width: 60
@@ -86,8 +87,6 @@ Metadata:
         - 83a21636-ede0-4366-95e8-15a29039b97d
         - 8ecd7e2a-9d15-464d-8205-49a1fc0be282
         - ea8332e7-0cb8-42d6-8b6b-f1e4211b8b6a
-      dependson:
-        - ea8332e7-0cb8-42d6-8b6b-f1e4211b8b6a
     83a21636-ede0-4366-95e8-15a29039b97d:
       size:
         width: 60
@@ -99,6 +98,8 @@ Metadata:
       parent: 021e398f-0bf7-40ff-9ec2-512fe8baafb7
       embeds: []
       iscontainedinside:
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
@@ -224,6 +225,8 @@ Metadata:
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
     99d3cc77-08fa-4b9a-bcf7-93c24dacac04:
       size:
         width: 60
@@ -235,6 +238,8 @@ Metadata:
       parent: 76970571-72f4-46e4-8357-f1593c29006d
       embeds: []
       iscontainedinside:
+        - 76970571-72f4-46e4-8357-f1593c29006d
+        - 76970571-72f4-46e4-8357-f1593c29006d
         - 76970571-72f4-46e4-8357-f1593c29006d
         - 76970571-72f4-46e4-8357-f1593c29006d
         - 76970571-72f4-46e4-8357-f1593c29006d
@@ -394,6 +399,8 @@ Metadata:
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
     33ed65e7-aeea-48e5-9682-5707f8068d4e:
       size:
         width: 60
@@ -405,6 +412,8 @@ Metadata:
       parent: 021e398f-0bf7-40ff-9ec2-512fe8baafb7
       embeds: []
       iscontainedinside:
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
@@ -467,6 +476,8 @@ Metadata:
       iscontainedinside:
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 76970571-72f4-46e4-8357-f1593c29006d
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+        - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
         - 021e398f-0bf7-40ff-9ec2-512fe8baafb7
@@ -593,11 +604,22 @@ Metadata:
         - 83a21636-ede0-4366-95e8-15a29039b97d
       iscontainedinside:
         - 06904afe-9f6f-4ad1-99f8-dc8de96b3c75
-    28895d75-97bf-4780-bcd6-5cc8ffd62ea5:
+    ee1a6b14-bc32-4955-9249-8eb46efeb557:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 401.55068588186697
+        'y': 113.62049278388186
+      z: 1
+      parent: 021e398f-0bf7-40ff-9ec2-512fe8baafb7
+      iscontainedinside:
+        - 06904afe-9f6f-4ad1-99f8-dc8de96b3c75
+    112d20ce-6ef4-43c9-837d-25d39623350b:
       source:
-        id: f26e817e-a232-47e8-845e-0415e4473ecb
+        id: ee1a6b14-bc32-4955-9249-8eb46efeb557
       target:
-        id: ea8332e7-0cb8-42d6-8b6b-f1e4211b8b6a
+        id: 06904afe-9f6f-4ad1-99f8-dc8de96b3c75
       z: 3
 Mappings:
   xrv9kAMIs:
@@ -630,62 +652,62 @@ Resources:
         - Key: Name
           Value: xrv9kHaRtr1CF
       UserData:
-        Fn::Base64: !Sub |
-            !! IOS XR Configuration
+        'Fn::Base64': !Sub |
+          !! IOS XR Configuration
+          !
+          hostname rtr1
+          !
+          username root
+           group root-lr
+           group cisco-support
+          !
+           lpts pifib hardware police
+            flow ssh known rate 15000
+            flow ssh default rate 15000
+          !
+          tpa
+           vrf default
+            address-family ipv4
+             update-source dataports TenGigE0/0/0/0
             !
-            hostname rtr1
+           !
+          !
+          !
+          bfd
+            echo disable
             !
-            username root
-             group root-lr
-             group cisco-support
-            !
-             lpts pifib hardware police
-              flow ssh known rate 15000
-              flow ssh default rate 15000
-            !
-            tpa
-             vrf default
-              address-family ipv4
-               update-source dataports TenGigE0/0/0/0
-              !
-             !
-            !
-            !
-            bfd
-              echo disable
-              !
-            !
-            grpc
-             port 57777
-             no-tls
-             service-layer
-             !
-            !
-            call-home
-             service active
-             contact smart-licensing
-             profile CiscoTAC-1
-              active
-              destination transport-method http
-             !
-            !
-            interface TenGigE0/0/0/0
-             ipv4 address 10.0.0.10 255.255.255.0
-             no shutdown
-            !
-            interface TenGigE0/0/0/1
-             ipv4 address 10.0.1.10 255.255.255.0
-             ipv4 address 10.0.1.40 255.255.255.0 secondary
-             no shutdown
-            !
-            router static
-             address-family ipv4 unicast
-              0.0.0.0/0 10.0.0.1
-             !
-            !
-            ssh server v2
-            ssh server vrf default
-            end
+          !
+          grpc
+           port 57777
+           no-tls
+           service-layer
+           !
+          !
+          call-home
+           service active
+           contact smart-licensing
+           profile CiscoTAC-1
+            active
+            destination transport-method http
+           !
+          !
+          interface TenGigE0/0/0/0
+           ipv4 address 10.0.0.10 255.255.255.0
+           no shutdown
+          !
+          interface TenGigE0/0/0/1
+           ipv4 address 10.0.1.10 255.255.255.0
+           ipv4 address 10.0.1.40 255.255.255.0 secondary
+           no shutdown
+          !
+          router static
+           address-family ipv4 unicast
+            0.0.0.0/0 10.0.0.1
+           !
+          !
+          ssh server v2
+          ssh server vrf default
+          end
     Metadata:
       'AWS::CloudFormation::Designer':
         id: 88fa615f-7921-42b1-afe5-aac03574b4c5
@@ -703,6 +725,11 @@ Resources:
     Properties:
       VpcId: !Ref Xrv9kHaVPC
       CidrBlock: 10.0.0.0/24
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Fn::GetAZs:
+                Ref: "AWS::Region"
     Metadata:
       'AWS::CloudFormation::Designer':
         id: 06904afe-9f6f-4ad1-99f8-dc8de96b3c75
@@ -727,62 +754,62 @@ Resources:
         - Key: Name
           Value: xrv9kHaRtr2CF
       UserData:
-        Fn::Base64: !Sub |
-            !! IOS XR Configuration
+        'Fn::Base64': !Sub |
+          !! IOS XR Configuration
+          !
+          hostname rtr2
+          !
+          username root
+           group root-lr
+           group cisco-support
+          !
+           lpts pifib hardware police
+            flow ssh known rate 15000
+            flow ssh default rate 15000
+          !
+          tpa
+           vrf default
+            address-family ipv4
+             update-source dataports TenGigE0/0/0/0
             !
-            hostname rtr2
+           !
+          !
+          !
+          bfd
+            echo disable
             !
-            username root
-             group root-lr
-             group cisco-support
-            !
-             lpts pifib hardware police
-              flow ssh known rate 15000
-              flow ssh default rate 15000
-            !
-            tpa
-             vrf default
-              address-family ipv4
-               update-source dataports TenGigE0/0/0/0
-              !
-             !
-            !
-            !
-            bfd
-              echo disable
-              !
-            !
-            grpc
-             port 57777
-             no-tls
-             service-layer
-             !
-            !
-            call-home
-             service active
-             contact smart-licensing
-             profile CiscoTAC-1
-              active
-              destination transport-method http
-             !
-            !
-            interface TenGigE0/0/0/0
-             ipv4 address 10.0.0.20 255.255.255.0
-             no shutdown
-            !
-            interface TenGigE0/0/0/1
-             ipv4 address 10.0.1.20 255.255.255.0
-             ipv4 address 10.0.1.40 255.255.255.0 secondary
-             no shutdown
-            !
-            router static
-             address-family ipv4 unicast
-              0.0.0.0/0 10.0.0.1
-             !
-            !
-            ssh server v2
-            ssh server vrf default
-            end
+          !
+          grpc
+           port 57777
+           no-tls
+           service-layer
+           !
+          !
+          call-home
+           service active
+           contact smart-licensing
+           profile CiscoTAC-1
+            active
+            destination transport-method http
+           !
+          !
+          interface TenGigE0/0/0/0
+           ipv4 address 10.0.0.20 255.255.255.0
+           no shutdown
+          !
+          interface TenGigE0/0/0/1
+           ipv4 address 10.0.1.20 255.255.255.0
+           ipv4 address 10.0.1.40 255.255.255.0 secondary
+           no shutdown
+          !
+          router static
+           address-family ipv4 unicast
+            0.0.0.0/0 10.0.0.1
+           !
+          !
+          ssh server v2
+          ssh server vrf default
+          end
     Metadata:
       'AWS::CloudFormation::Designer':
         id: c0038f83-7929-47d7-bb80-8299f0e993de
@@ -795,7 +822,6 @@ Resources:
         - LinuxAMIs
         - !Ref 'AWS::Region'
         - Name
-      IamInstanceProfile: !Ref IamEc2RoleInstanceProfile
       NetworkInterfaces:
         - DeviceIndex: '0'
           NetworkInterfaceId: !Ref DwnStrmInstanceIntf1
@@ -816,6 +842,14 @@ Resources:
         - IpProtocol: tcp
           FromPort: '22'
           ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2201'
+          ToPort: '2201'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2202'
+          ToPort: '2202'
           CidrIp: 0.0.0.0/0
     Metadata:
       'AWS::CloudFormation::Designer':
@@ -864,7 +898,7 @@ Resources:
     Type: 'AWS::EC2::NetworkInterface'
     Properties:
       SubnetId: !Ref Xrv9kHaBFDsubnet
-      PrivateIpAddresses: 
+      PrivateIpAddresses:
         - PrivateIpAddress: 10.0.1.10
           Primary: 'true'
         - PrivateIpAddress: 10.0.1.40
@@ -899,6 +933,11 @@ Resources:
     Properties:
       VpcId: !Ref Xrv9kHaVPC
       CidrBlock: 10.0.1.0/24
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Fn::GetAZs:
+                Ref: "AWS::Region"
     Metadata:
       'AWS::CloudFormation::Designer':
         id: ead94ae3-8f14-4fa4-993d-502b1f908ec7
@@ -930,6 +969,7 @@ Resources:
       SecurityGroupIds:
         - !Ref Xrv9kHaBFDsubnetSG
       VpcEndpointType: Interface
+      PrivateDnsEnabled: true
       PolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -1010,3 +1050,26 @@ Resources:
     Metadata:
       'AWS::CloudFormation::Designer':
         id: e4f0fb86-9a19-4d07-9a40-d501aaa46592
+  Bastion:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: m4.large
+      KeyName: cloudformation-key
+      ImageId: !FindInMap 
+        - LinuxAMIs
+        - !Ref 'AWS::Region'
+        - Name
+      NetworkInterfaces:
+        - DeleteOnTermination: true
+          Description: Primary network interface
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref Xrv9kHaMgmtSG
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref Xrv9kHaMgmtSubnet
+      Tags:
+        - Key: Name
+          Value: Bastion
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ee1a6b14-bc32-4955-9249-8eb46efeb557
