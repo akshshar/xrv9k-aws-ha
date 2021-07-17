@@ -515,24 +515,33 @@ class SLHaBfd(BaseLogger):
                         
                         instance = self.aws_client.resource.Instance(self.instance_id)
                         self.syslogger.debug(instance.network_interfaces)
-                        intf_private_ips = instance.network_interfaces[int(interface_num)].private_ip_addresses
-                        intf_eni_id = instance.network_interfaces[int(interface_num)].id
-                        interface_map[intf_eni_id] = {"interface_num": interface_num, 
-                                                      "private_ip_addresses": intf_private_ips}
-                        self.syslogger.debug(intf_private_ips)
-                        match=False
-                        for intf_private_ip in intf_private_ips:
-                            if not intf_private_ip['Primary']:
-                                if intf_private_ip['PrivateIpAddress'] == secondary_ip:
-                                    self.syslogger.debug("Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
-                                    self.secondary_ip_hash[str(interface_num)] = True
-                                    match=True
-                                    break
 
-                        if not match:            
-                            self.syslogger.debug(" NO Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
-                            self.secondary_ip_hash[str(interface_num)] = False
+                        intf_index = None
+                        for instance_net_intf in instance.network_interfaces:
+                            if interface_num == instance_net_intf.attachment["DeviceIndex"]:
+                                intf_index = instance.network_interfaces.index(instance_net_intf)
+                                break
+ 
+                        if intf_index is not None:
+                            intf_private_ips = instance.network_interfaces[intf_index].private_ip_addresses
+                            intf_eni_id = instance.network_interfaces[intf_index].id
+                            interface_map[intf_eni_id] = {"interface_num": interface_num, 
+                                                          "private_ip_addresses": intf_private_ips}
+                            self.syslogger.debug(intf_private_ips)
+                            match=False
+                            for intf_private_ip in intf_private_ips:
+                                if not intf_private_ip['Primary']:
+                                    if intf_private_ip['PrivateIpAddress'] == secondary_ip:
+                                        self.syslogger.debug("Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
+                                        self.secondary_ip_hash[str(interface_num)] = True
+                                        match=True
+                                        break
 
+                            if not match:            
+                                self.syslogger.debug(" NO Secondary IP for interface" +str(interface_num)+" with eni-id: "+str(intf_eni_id)+" matches desired secondary IP: "+str(secondary_ip)+" for HA pair")
+                                self.secondary_ip_hash[str(interface_num)] = False
+                        else:
+                            self.syslogger.info("Failed to find instance interface with matching DeviceIndex")
                     self.update_redis("ha_interfaces", json.dumps(interface_map))
 
                 except Exception as e:
