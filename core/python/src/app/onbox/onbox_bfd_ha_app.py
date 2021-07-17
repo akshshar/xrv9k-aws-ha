@@ -190,6 +190,8 @@ class AWSClient(BaseLogger):
                 response = requests.get(self.metadata_url_latest+"/meta-data/iam/security-credentials/", headers=self.token_header)
                 self.rolename = response.text 
             except Exception as e:
+                self.syslogger.info("Failed to fetch attached IAM role name. error: " +str(e))
+                self.exit= True
         else:
             self.syslogger.info("No token available, cannot fetch IAM role name, bailing out....")
             self.exit =  True
@@ -269,6 +271,7 @@ class AWSClient(BaseLogger):
                 if not set_up:
                     self.syslogger.info("Time elapsed, refreshing temporary credentials")
                 self.generate_token()
+                self.fetch_iam_role_name() 
                 self.fetch_temp_credentials()
                 self.fetch_instance_region()
                 self.fetch_self_instance_id()
