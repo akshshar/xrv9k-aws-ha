@@ -818,6 +818,7 @@ Resources:
     Properties:
       InstanceType: m4.large
       KeyName: cloudformation-key
+      IamInstanceProfile: !Ref IamEc2RoleInstanceProfile
       ImageId: !FindInMap 
         - LinuxAMIs
         - !Ref 'AWS::Region'
@@ -850,6 +851,10 @@ Resources:
         - IpProtocol: tcp
           FromPort: '2202'
           ToPort: '2202'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2203'
+          ToPort: '2203'
           CidrIp: 0.0.0.0/0
     Metadata:
       'AWS::CloudFormation::Designer':
@@ -960,14 +965,32 @@ Resources:
     Metadata:
       'AWS::CloudFormation::Designer':
         id: 33ed65e7-aeea-48e5-9682-5707f8068d4e
+  Xrv9kVpcEndpointSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref Xrv9kHaVPC
+      GroupDescription: Allow access for All traffic
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          CidrIp: 10.0.0.0/24
+        - IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: 10.0.0.0/24
+        - IpProtocol: '-1'
+          CidrIp: 10.0.1.0/24
+        - IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: 10.0.1.0/24       
   Ec2AccessIntfEndpoint:
     Type: 'AWS::EC2::VPCEndpoint'
     Properties:
       VpcId: !Ref Xrv9kHaVPC
       SubnetIds:
-        - !Ref Xrv9kHaBFDsubnet
+        - !Ref Xrv9kHaMgmtSubnet
       SecurityGroupIds:
-        - !Ref Xrv9kHaBFDsubnetSG
+        - !Ref Xrv9kVpcEndpointSG 
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
       PolicyDocument:
@@ -984,6 +1007,7 @@ Resources:
   IamEc2AccessRole:
     Type: 'AWS::IAM::Role'
     Properties:
+      RoleName: PrivateEc2Access
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:

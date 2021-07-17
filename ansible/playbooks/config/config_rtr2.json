@@ -1,0 +1,32 @@
+{
+    "config": {
+    	"global_retry_interval": 30,
+    	"global_retry_count": 5,
+    	"ec2_private_endpoint_url": "https://ec2.us-east-1.amazonaws.com",
+    	"grpc_server": "127.0.0.1",
+    	"grpc_port": 57777,
+        "action": {
+            "method": "secondary_ip_shift",
+            "method_params": {
+            	"intf_list": [
+            		{
+            			"secondary_ip": "10.0.1.40",
+			        "instance_intf_number": 1
+            		}
+            	]
+            }
+        },
+    	"bfd_sessions": [
+    		{
+    			"session_type": "SINGLE_HOP",
+	    		"intf_name": "TenGigE0/0/0/1",
+	    		"neigh_ip": "10.0.1.10",
+	    		"bfd_desired_tx_int_usec": 50000,
+		        "detect_multiplier": 3,
+		        "vrf_name": "default"
+    	    }
+    	]
+    	
+    }
+
+}

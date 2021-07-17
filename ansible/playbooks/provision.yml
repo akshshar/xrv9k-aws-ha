@@ -91,6 +91,11 @@
     - set_fact:
         vpc_endpoint_private_dns: "ec2.{{ region }}.amazonaws.com"
 
+    - name: Delete existing hosts file
+      file:
+        path: "{{ playbook_dir }}/hosts"
+        state: absent
+
     - name: Create /etc/hosts file to be used for quick vpc-endpoint domain resolution by the app
       lineinfile:
           dest: "{{ playbook_dir }}/hosts"
@@ -221,7 +226,7 @@
    
     - name: Build the xrv9k HA app docker image
       shell: cd /home/ec2-user/xrv9k-aws-ha/core/python/ && docker build -t akshshar/xrv9k_aws_ha .
-      
+    
     - name: Create HA app docker tarball
       shell: docker save akshshar/xrv9k_aws_ha:latest > /home/ec2-user/xrv9k-aws-ha/xr-appmgr/src/apps/xrv9k_aws_ha/xrv9k_aws_ha.tar
 
@@ -234,12 +239,12 @@
 
     - name: Build the xrv9k HA App RPM
       shell: cd /home/ec2-user/xrv9k-aws-ha/xr-appmgr/ && ./appmgr_build -b build.yaml 
-      
 
     - name: Fetch the built RPM to local playbook directory
       fetch:
         src: /home/ec2-user/xrv9k-aws-ha/xr-appmgr/RPMS/x86_64/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
-        dest: "{{ playbook_dir }}/
+        dest: "{{ playbook_dir }}/"
+        flat: yes
 
 - hosts: aws_xrv9k_rtr1
   gather_facts: false
@@ -256,6 +261,106 @@
 
     - cisco.iosxr.iosxr_command:
         commands:
-          - show version
-          - show interfaces
-          - run ls
+          - show running-config
+
+    - name: Copy HA App json configuration to router hard disk 
+      net_put:
+        src: "{{ playbook_dir }}/config/config_rtr1.json" 
+        dest: /misc/disk1/config.json 
+
+    - name: Copy vpc endpoint hosts configuration to router hard disk
+      net_put:
+        src: "{{ playbook_dir }}/hosts"
+        dest: /misc/disk1/hosts
+
+    - name: Copy Application RPM to router hard disk
+      net_put:
+        src: "{{ playbook_dir }}/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm"
+        dest: /misc/disk1/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
+        mode: binary
+      vars:
+        ansible_command_timeout: 600
+      register: result
+      ignore_errors: true
+
+    - debug: 
+        msg: "{{ result }}"
+
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - appmgr package install rpm /misc/disk1/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
+           
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '\r'} 
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '\r'}   
+
+    - name: Activate the xrv9k HA App 
+      cisco.iosxr.iosxr_config:
+        lines:
+          - activate type docker source xrv9k_aws_ha docker-run-opts "-itd --net=host -v {app_install_root}/config/xrv9k_aws_ha/config.json:/app/onbox/config.json -v {app_install_root}/config/xrv9k_aws_ha/hosts:/etc/hosts" 
+        parents: appmgr application xrv9k_aws_ha
+     
+- hosts: aws_xrv9k_rtr2
+  gather_facts: false
+  connection: network_cli
+  vars:
+    ansible_user: root
+    ansible_port: 2202
+    ansible_network_os: cisco.iosxr.iosxr
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  tasks:
+    - name: wait for instances to become available
+      wait_for_connection:
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - show running-config 
+
+    - name: Copy HA App json configuration to router hard disk
+      net_put:
+        src: "{{ playbook_dir }}/config/config_rtr2.json"
+        dest: /misc/disk1/config.json
+
+    - name: Copy vpc endpoint hosts configuration to router hard disk
+      net_put:
+        src: "{{ playbook_dir }}/hosts"
+        dest: /misc/disk1/hosts
+
+    - name: Copy Application RPM to router hard disk
+      net_put:
+        src: "{{ playbook_dir }}/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm"
+        dest: /misc/disk1/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
+        mode: binary
+      vars:
+        ansible_command_timeout: 600
+      register: result
+      ignore_errors: true
+
+    - debug: 
+        msg: "{{ result }}"
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - appmgr package install rpm /misc/disk1/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
+
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '\r'}                                                                  
+
+    - cisco.iosxr.iosxr_command:
+        commands:
+          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '\r'}         
+
+    - name: Activate the xrv9k HA App
+      cisco.iosxr.iosxr_config:
+        lines:
+          - activate type docker source xrv9k_aws_ha docker-run-opts "-itd --net=host -v {app_install_root}/config/xrv9k_aws_ha/config.json:/app/onbox/config.json -v {app_install_root}/config/xrv9k_aws_ha/hosts:/etc/hosts"
+        parents: appmgr application xrv9k_aws_ha 
