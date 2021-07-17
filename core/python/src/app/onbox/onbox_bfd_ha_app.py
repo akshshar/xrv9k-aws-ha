@@ -594,8 +594,13 @@ class SLHaBfd(BaseLogger):
                     for interface in action["method_params"]["intf_list"]:
                         secondary_ip = interface["secondary_ip"]
                         interface_num = interface["instance_intf_number"]
-                        
-                        thread = threading.Thread(target=self.action_thread_secondary_ip_shift, args=(secondary_ip, interface_num, thread_index,))
+                        instance = self.aws_client.resource.Instance(self.instance_id)
+                        intf_index = None
+                        for instance_net_intf in instance.network_interfaces:
+                            if interface_num == instance_net_intf.attachment["DeviceIndex"]:
+                                intf_index = instance.network_interfaces.index(instance_net_intf)
+                                break 
+                        thread = threading.Thread(target=self.action_thread_secondary_ip_shift, args=(secondary_ip, intf_index, thread_index,))
                         self.syslogger.info("Starting Action thread "+str(thread.name))
                         self.threadList.append(thread)
                         thread.daemon = True                            # Daemonize thread
