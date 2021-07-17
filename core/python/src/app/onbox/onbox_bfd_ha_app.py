@@ -184,10 +184,20 @@ class AWSClient(BaseLogger):
             self.syslogger.info("Failed to fetch token for AWS interactions. error: " +str(e))
 
 
+    def fetch_iam_role_name(self):
+        if self.token_header != "":
+            try:
+                response = requests.get(self.metadata_url_latest+"/meta-data/iam/security-credentials/", headers=self.token_header)
+                self.rolename = response.text 
+            except Exception as e:
+        else:
+            self.syslogger.info("No token available, cannot fetch IAM role name, bailing out....")
+            self.exit =  True
+
     def fetch_temp_credentials(self):
         if self.token_header != "":
             try:
-                response = requests.get(self.metadata_url_latest+"/meta-data/iam/security-credentials/ec2access", headers=self.token_header)
+                response = requests.get(self.metadata_url_latest+"/meta-data/iam/security-credentials/"+str(self.rolename), headers=self.token_header)
                 self.access_key=response.json()["AccessKeyId"]
                 self.secret_key=response.json()["SecretAccessKey"]
                 self.session_token=response.json()["Token"]
