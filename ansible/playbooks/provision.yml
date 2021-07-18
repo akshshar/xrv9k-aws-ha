@@ -258,6 +258,8 @@
   tasks:
     - name: wait for instances to become available
       wait_for_connection:
+        timeout: 1500
+        sleep: 5
 
     - cisco.iosxr.iosxr_command:
         commands:
@@ -294,11 +296,12 @@
 
     - cisco.iosxr.iosxr_command:
         commands:
-          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '\r'} 
+          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '/appmgr/config/xrv9k_aws_ha/config.json'}
 
     - cisco.iosxr.iosxr_command:
         commands:
-          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '\r'}   
+          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '/appmgr/config/xrv9k_aws_ha/hosts'}
+
 
     - name: Activate the xrv9k HA App 
       cisco.iosxr.iosxr_config:
@@ -318,6 +321,8 @@
   tasks:
     - name: wait for instances to become available
       wait_for_connection:
+        timeout: 1500
+        sleep: 5
 
     - cisco.iosxr.iosxr_command:
         commands:
@@ -353,11 +358,12 @@
 
     - cisco.iosxr.iosxr_command:
         commands:
-          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '\r'}                                                                  
+          - {command: 'copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/config.json\]?', answer: '/appmgr/config/xrv9k_aws_ha/config.json'}
 
     - cisco.iosxr.iosxr_command:
         commands:
-          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '\r'}         
+          - {command: 'copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts', prompt: 'Destination filename \[/apphost:/appmgr/config/xrv9k_aws_ha/hosts\]?', answer: '/appmgr/config/xrv9k_aws_ha/hosts'}
+
 
     - name: Activate the xrv9k HA App
       cisco.iosxr.iosxr_config:
