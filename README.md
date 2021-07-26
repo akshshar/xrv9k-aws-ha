@@ -301,13 +301,13 @@ scp hosts root@<xrv9k-ip>:/misc/disk1/
 
 ```
 # Install RPM
-appmgr package install rpm /misc/disk1/xrv9k-slbfdha-aws-0.1.0-eXR.x86_64.rpm
+appmgr package install rpm /misc/disk1/xrv9k-aws-ha-0.1.0-eXR.x86_64.rpm
 
 # copy config file to config mount of App
-copy harddisk:config_rtr1.json apphost:/appmgr/config/xrv9k_slbfdha_aws/config.json
+copy harddisk:/config.json apphost:/appmgr/config/xrv9k_aws_ha/config.json
 
 # copy hosts file to config mount of App
-copy harddisk:hosts apphost:/appmgr/config/xrv9k_slbfdha_aws/hosts
+copy harddisk:/hosts apphost:/appmgr/config/xrv9k_aws_ha/hosts
 ```
 
 
@@ -496,6 +496,8 @@ RP/0/RP0/CPU0:rtr2#
 
 #### Access Keys/Commands directly using docker-exec "show"
 
+**Check HA State of the router**
+
 ```
 RP/0/RP0/CPU0:rtr2#
 RP/0/RP0/CPU0:rtr2#appmgr application exec name xrv9k_aws_ha docker-exec-cmd show ha_state  
@@ -506,6 +508,11 @@ Last Created: 2021/07/06 13:00:24.442059
 STANDBY
 RP/0/RP0/CPU0:rtr2#
 RP/0/RP0/CPU0:rtr2#
+```
+
+**Check Last discovered BFD neighbors (this is not real time BFD state. Use "show bfd session" in XR instead) **
+
+```
 RP/0/RP0/CPU0:rtr2#
 RP/0/RP0/CPU0:rtr2#appmgr application exec name xrv9k_aws_ha docker-exec-cmd show bfd_neighbors
 Tue Jul  6 13:00:39.300 UTC
@@ -548,6 +555,11 @@ Last Created: 2021/07/06 12:09:41.012098
 }
 RP/0/RP0/CPU0:rtr2#
 RP/0/RP0/CPU0:rtr2#
+```
+
+**Check Input configuration (config.json) provided to the app**
+
+```
 RP/0/RP0/CPU0:rtr2#appmgr application exec name xrv9k_aws_ha docker-exec-cmd show config       
 Tue Jul  6 13:00:46.610 UTC
 
@@ -596,6 +608,11 @@ Last Created: 2021/07/06 11:51:38.060111
   }
 }
 RP/0/RP0/CPU0:rtr2#
+```
+
+**Check Last BFD event and correlate with Applications actions (like failover or ignore)**
+
+```
 RP/0/RP0/CPU0:rtr2#
 RP/0/RP0/CPU0:rtr2#appmgr application exec name xrv9k_aws_ha docker-exec-cmd show last_bfd_down_event
 Tue Jul  6 13:01:04.561 UTC
