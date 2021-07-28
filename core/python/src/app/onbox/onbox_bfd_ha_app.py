@@ -122,10 +122,10 @@ class BaseLogger(object):
                 logger.addHandler(filehandler)
 
         else:
-            MAX_SIZE = 1024 * 1024
+            MAX_SIZE = 1024 * 1024 * 10
             LOG_PATH = "/var/log/ha_app_bkp.log"
             handler = logging.handlers.RotatingFileHandler(
-                LOG_PATH, maxBytes=MAX_SIZE, backupCount=1)
+                LOG_PATH, maxBytes=MAX_SIZE, backupCount=2)
             handler.formatter = formatter
             logger.addHandler(handler)
 
@@ -265,11 +265,11 @@ class AWSClient(BaseLogger):
             self.syslogger.info("Checking if temporary credentials need to be refreshed...")
             self.call_time=datetime.datetime.now()
             time_elapsed = self.call_time -  self.start_time
-            time_elapsed_hours = (int(time_elapsed.total_seconds())/3600)
+            time_elapsed_minutes = (int(time_elapsed.total_seconds())/60)
 
-            if (time_elapsed_hours >= 1) or (set_up):
+            if (time_elapsed_minutes >= 10) or (set_up):
                 if not set_up:
-                    self.syslogger.info("Time elapsed, refreshing temporary credentials")
+                    self.syslogger.info("10 minutes elapsed, refreshing temporary credentials")
                 self.generate_token()
                 self.fetch_iam_role_name() 
                 self.fetch_temp_credentials()
@@ -278,14 +278,15 @@ class AWSClient(BaseLogger):
                 self.setup_boto_resource()
                 if not self.exit:
                     self.start_time = datetime.datetime.now()
+                    self.syslogger.info("Initial Setup done. Start refreshing credentials periodically")
                     set_up=False
                 else:
                     self.syslogger.info("Failed to set up AWS client resource. Will try again in some time...")
             else:
-                self.syslogger.info("Credentials should still be valid, will check again in 15 mins..")
+                self.syslogger.info("Credentials should still be valid, will check again in 5 mins..")
 
-                while not self.poison_pill.wait(900): # Sleep for 15 mins before checking validity of credentials again
-                    self.syslogger.info("Completed 15 mins, checking credentials again")
+                while not self.poison_pill.wait(300): # Sleep for 5 mins before checking validity of credentials again
+                    self.syslogger.info("Completed 5 mins, checking credentials again")
 
                 if self.poison_pill.is_set():
                     self.syslogger.info("Received poison pill, terminating setup_ec2_client thread...")
@@ -437,7 +438,13 @@ class SLHaBfd(BaseLogger):
         self.interface_state_hash = {}
         self.ha_state="UNKNOWN"
         self.ha_interfaces= {}
-        self.check_secondary_ip()
+        check_status = self.check_secondary_ip()
+
+        if check_status["status"] == "error":
+            self.syslogger.info("Failed to check secondary IP status during init. Aborting...")
+            self.exit = True
+            return
+
         self.action_pool()
 
 
@@ -490,8 +497,13 @@ class SLHaBfd(BaseLogger):
         while not self.stop_check_ha_state.is_set():
             self.stop_check_ha_state.wait(10)
             self.syslogger.info("Periodic HA state check...")
-            self.check_secondary_ip(debug=False)
-            self.converge_ha_state(debug=False) 
+            check_status = self.check_secondary_ip(debug=False)
+
+            if check_status["status"] == "error":
+                self.syslogger.info("Unable to check secondary IP status, forcing state to UNKNOWN")
+                self.converge_ha_state(force_state="UNKNOWN")
+            else:
+                self.converge_ha_state(debug=False) 
             self.syslogger.info("HA State: "+str(self.ha_state))
 
 
@@ -542,14 +554,18 @@ class SLHaBfd(BaseLogger):
                                 self.secondary_ip_hash[str(interface_num)] = False
                         else:
                             self.syslogger.info("Failed to find instance interface with matching DeviceIndex")
+                            return  {"status": "error", "output": "Failed to find instance interface with matching DeviceIndex"}
+
                     self.update_redis("ha_interfaces", json.dumps(interface_map))
+                    return  {"status": "success"}
 
                 except Exception as e:
                     self.syslogger.info("Failed to check the current secondary IP status on instance. Error: "+str(e))
+                    return  {"status": "error", "output": "Failed to check the current secondary IP status on instance"}
  
         self.syslogger.setLevel(logging.INFO)
            
-    def converge_ha_state(self, action="secondary_ip_shift", debug=True):
+    def converge_ha_state(self, action="secondary_ip_shift", debug=True, force_state=None):
         # Three HA states are defined for a node
         # UNKNOWN:  This is the default state when a node first boots up (HA app comes up) or post failure + reboot
         # ACTIVE:  When the current node is handling traffic (If secondary_ip_shift action is used, then current node must own the secondary IPs)
@@ -562,19 +578,22 @@ class SLHaBfd(BaseLogger):
         else:
             self.syslogger.setLevel(logging.INFO)
         try:
-            if action == "secondary_ip_shift":
-                self.syslogger.debug(self.secondary_ip_hash)
-                if all(val==True for val in self.secondary_ip_hash.values()):
-                    self.syslogger.debug("All the secondary IPs assigned to local node, setting ha_state to ACTIVE")
-                    self.ha_state = "ACTIVE"
-                elif all(val==False for val in self.secondary_ip_hash.values()):
-                    self.syslogger.debug("None of the secondary IPs assigned to local node, setting ha_state to STANDBY")
-                    self.ha_state = "STANDBY"
-                else:
-                    self.syslogger.debug("Not all interfaces converged properly, setting ha_state to UNKNOWN")
-                    self.ha_state = "UNKNOWN"
+            if force_state is not None:
+                self.ha_state = str(force_state)
+            else:    
+                if action == "secondary_ip_shift":
+                    self.syslogger.debug(self.secondary_ip_hash)
+                    if all(val==True for val in self.secondary_ip_hash.values()):
+                        self.syslogger.debug("All the secondary IPs assigned to local node, setting ha_state to ACTIVE")
+                        self.ha_state = "ACTIVE"
+                    elif all(val==False for val in self.secondary_ip_hash.values()):
+                        self.syslogger.debug("None of the secondary IPs assigned to local node, setting ha_state to STANDBY")
+                        self.ha_state = "STANDBY"
+                    else:
+                        self.syslogger.debug("Not all interfaces converged properly, setting ha_state to UNKNOWN")
+                        self.ha_state = "UNKNOWN"
 
-                self.update_redis("ha_state", str(self.ha_state))
+            self.update_redis("ha_state", str(self.ha_state))
         except Exception as e:
             self.syslogger.info("Failed to converge HA state. Set to UNKNOWN. Error: "+str(e))
             self.ha_state = "UNKNOWN"
