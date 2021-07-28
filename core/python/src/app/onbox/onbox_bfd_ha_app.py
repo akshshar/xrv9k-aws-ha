@@ -264,10 +264,6 @@ class AWSClient(BaseLogger):
         while True:
             self.syslogger.info("Checking if temporary credentials need to be refreshed...")
             self.call_time=datetime.datetime.now()
-            self.syslogger.info("call_time:")
-            self.syslogger.info(self.call_time)
-            self.syslogger.info("start_time:")
-            self.syslogger.info(self.start_time)
             time_elapsed = self.call_time -  self.start_time
             time_elapsed_minutes = (int(time_elapsed.total_seconds())/60)
 
@@ -275,10 +271,7 @@ class AWSClient(BaseLogger):
             self.syslogger.info(time_elapsed)
             self.syslogger.info(time_elapsed_minutes)
 
-            if (time_elapsed_minutes >= 10) or (set_up):
-                self.syslogger.info("Entered Refresh!!")
-                self.syslogger.info("set_up: ")
-                self.syslogger.info(set_up)
+            if (time_elapsed_minutes >= 10) or (set_up): 
                 if not set_up:
                     self.syslogger.info("10 minutes elapsed, refreshing temporary credentials")
                 self.generate_token()
