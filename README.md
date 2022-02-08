@@ -1,3 +1,10 @@
+<hr/>
+<h1>Deprecation Notice</h1>
+<hr/>
+
+> This application has been **deprecated** and will no longer be supported. Instead, it will be replaced with an official IOS-XR CLI feature in the future. However, feel free to fork the code and build similar applications based on the basic design.
+
+
 # xrv9k-aws-ha
 Onbox docker App to enable High-Availability for XRv9k on AWS using IOS-XR Service-Layer API and AWS API
 
